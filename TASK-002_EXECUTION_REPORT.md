@@ -2,7 +2,7 @@
 
 执行日期：2026-10-12（Asia/Tokyo）  
 执行基线：v1.2.4；分支：`main`；开始时 HEAD：`2fdc0e05a41ff655315993d22c7ae8304f459f95`。  
-最终 commit SHA：**未生成**。本 Task 的 MySQL 8 必测项因本机数据库服务不可启动而未完成，故不应以“完成”状态提交或进入 TASK-101。
+实现 checkpoint commit SHA：`77a30f993b7ef7a14952ee0bc067be63a55edc65`。本 Task 的 MySQL 8 必测项因本机数据库服务不可启动而未完成，因此不存在“TASK-002 完成”commit，也不得进入 TASK-101。
 
 ## 结论
 
