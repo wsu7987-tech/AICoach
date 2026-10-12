@@ -11,6 +11,7 @@ from app.schemas.intent import (
     PromptMessage,
     RuntimeConfigSnapshot,
     canonical_json,
+    validate_runtime_config_snapshot,
 )
 
 
@@ -27,11 +28,7 @@ class PromptBuilder:
         text: str,
         context: dict[str, Any] | None = None,
     ) -> PromptBuildResult:
-        config = (
-            snapshot
-            if isinstance(snapshot, RuntimeConfigSnapshot)
-            else RuntimeConfigSnapshot.model_validate(snapshot)
-        )
+        config = validate_runtime_config_snapshot(snapshot)
         effective_config = _effective_config(config)
         system_payload = {
             "task": config.prompt_template.system,

@@ -13,6 +13,7 @@ from app.schemas.intent import (
     RuntimeConfigSnapshot,
     SlotValue,
     validate_llm_output,
+    validate_runtime_config_snapshot,
 )
 
 BOOTSTRAP_PATH = Path(__file__).resolve().parents[2] / "bootstrap" / "initial-config.v1.json"
@@ -32,9 +33,7 @@ def test_runtime_contract_and_request_accept_valid_values() -> None:
         route="training_business",
         intents=[IntentCandidate(name="start_training", zh="开始训练", confidence=0.98)],
         slots=[
-            SlotValue(
-                name="exercise", zh="动作", value="深蹲", start=3, end=5, confidence=0.99
-            )
+            SlotValue(name="exercise", zh="动作", value="深蹲", start=3, end=5, confidence=0.99)
         ],
         risk=None,
         need_clarification=False,
@@ -43,6 +42,60 @@ def test_runtime_contract_and_request_accept_valid_values() -> None:
 
     assert result.risk is None
     assert result.model_dump()["route"] == "training_business"
+
+
+def test_training_business_supports_route_only_output_and_runtime_mapping(
+    snapshot: RuntimeConfigSnapshot,
+) -> None:
+    output = LLMStructuredIntentOutput(
+        route="training_business",
+        intents=[],
+        need_clarification=False,
+        clarification=None,
+    )
+
+    validated = validate_llm_output(output, snapshot, request_id="req_1", text="开始训练")
+    runtime = IntentResult(
+        request_id="req_1",
+        text="开始训练",
+        route="training_business",
+        intents=[],
+        need_clarification=False,
+        clarification=None,
+    )
+    schema = LLMStructuredIntentOutput.model_json_schema()
+
+    assert validated.result.intents == []
+    assert runtime.intents == []
+    assert "minItems" not in schema["properties"]["intents"]
+    assert "intents" in schema["required"]
+
+    with pytest.raises(ValidationError, match="training_business cannot require clarification"):
+        LLMStructuredIntentOutput(
+            route="training_business",
+            intents=[],
+            need_clarification=True,
+            clarification="请选择训练项目",
+        )
+
+
+def test_non_training_routes_require_an_intent() -> None:
+    with pytest.raises(ValidationError, match="non-training routes require at least one intent"):
+        LLMStructuredIntentOutput(
+            route="social_chat",
+            intents=[],
+            need_clarification=False,
+            clarification=None,
+        )
+    with pytest.raises(ValidationError, match="non-training routes require at least one intent"):
+        IntentResult(
+            request_id="req_1",
+            text="你好",
+            route="social_chat",
+            intents=[],
+            need_clarification=False,
+            clarification=None,
+        )
 
 
 @pytest.mark.parametrize("confidence", [-0.01, 1.01])
@@ -139,9 +192,7 @@ def test_utf16_span_is_repaired_when_unique_and_dropped_when_ambiguous(
         route="training_business",
         intents=[IntentCandidate(name="start_training", zh="开始训练", confidence=1)],
         slots=[
-            SlotValue(
-                name="body_part", zh="身体部位", value="胸", start=2, end=3, confidence=1
-            )
+            SlotValue(name="body_part", zh="身体部位", value="胸", start=2, end=3, confidence=1)
         ],
         need_clarification=False,
     )
@@ -164,9 +215,7 @@ def test_valid_utf16_span_and_alias_are_retained(snapshot: RuntimeConfigSnapshot
         route="training_business",
         intents=[IntentCandidate(name="start_training", zh="开始训练", confidence=1)],
         slots=[
-            SlotValue(
-                name="body_part", zh="身体部位", value="chest", start=3, end=5, confidence=1
-            )
+            SlotValue(name="body_part", zh="身体部位", value="chest", start=3, end=5, confidence=1)
         ],
         need_clarification=False,
     )
@@ -176,3 +225,49 @@ def test_valid_utf16_span_and_alias_are_retained(snapshot: RuntimeConfigSnapshot
     assert validated.result.slots[0].value == "chest"
     assert validated.result.slots[0].start == 3
     assert validated.result.slots[0].end == 5
+
+
+def test_unlocatable_slot_is_dropped_without_failing_intent_result(
+    snapshot: RuntimeConfigSnapshot,
+) -> None:
+    output = LLMStructuredIntentOutput(
+        route="training_business",
+        intents=[],
+        slots=[
+            SlotValue(name="body_part", zh="身体部位", value="knee", start=0, end=1, confidence=1)
+        ],
+        need_clarification=False,
+    )
+
+    validated = validate_llm_output(output, snapshot, request_id="req_1", text="我要练胸")
+
+    assert validated.result.slots == []
+    assert len(validated.validation_issues) == 1
+    assert validated.validation_issues[0].code == "SLOT_SPAN_INVALID"
+    assert validated.validation_issues[0].slot.value == "knee"
+
+
+def test_snapshot_validation_reconstructs_instances_before_returning_them(
+    snapshot: RuntimeConfigSnapshot,
+) -> None:
+    validated = validate_runtime_config_snapshot(snapshot)
+
+    assert validated is not snapshot
+    assert validated == snapshot
+
+    snapshot.routes[0].enabled = False
+    with pytest.raises(ValidationError, match="all fixed Route Contract routes must be enabled"):
+        validate_runtime_config_snapshot(snapshot)
+
+
+def test_snapshot_validation_rejects_mutated_missing_route_and_invalid_dict(
+    snapshot: RuntimeConfigSnapshot,
+) -> None:
+    snapshot.routes.pop()
+    with pytest.raises(ValidationError, match="seven fixed Route Contract"):
+        validate_runtime_config_snapshot(snapshot)
+
+    invalid_document = snapshot.model_dump(mode="json")
+    invalid_document["routes"] = []
+    with pytest.raises(ValidationError, match="seven fixed Route Contract"):
+        validate_runtime_config_snapshot(invalid_document)

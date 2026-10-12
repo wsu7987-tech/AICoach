@@ -1,6 +1,9 @@
 import json
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from app.prompting.builder import PromptBuilder
 from app.schemas.intent import RuntimeConfigSnapshot
 
@@ -57,9 +60,30 @@ def test_enabled_snapshot_change_changes_prompt_hash() -> None:
 
     assert baseline.prompt_hash != changed_result.prompt_hash
     assert (
-        baseline.metadata["config_snapshot_hash"]
-        != changed_result.metadata["config_snapshot_hash"]
+        baseline.metadata["config_snapshot_hash"] != changed_result.metadata["config_snapshot_hash"]
     )
+
+
+def test_prompt_builder_revalidates_snapshot_instances_before_use() -> None:
+    snapshot = _snapshot()
+    expected = PromptBuilder().build(snapshot.model_dump(mode="json"), text="我要做深蹲")
+    actual = PromptBuilder().build(snapshot, text="我要做深蹲")
+
+    assert actual.final_prompt == expected.final_prompt
+    assert actual.prompt_hash == expected.prompt_hash
+    assert actual.metadata == expected.metadata
+
+    snapshot.routes[0].enabled = False
+    with pytest.raises(ValidationError, match="all fixed Route Contract routes must be enabled"):
+        PromptBuilder().build(snapshot, text="我要做深蹲")
+
+
+def test_prompt_builder_rejects_snapshot_with_a_missing_fixed_route() -> None:
+    snapshot = _snapshot()
+    snapshot.routes.pop()
+
+    with pytest.raises(ValidationError, match="seven fixed Route Contract"):
+        PromptBuilder().build(snapshot, text="我要做深蹲")
 
 
 def canonical_schema_text(schema: object) -> str:

@@ -118,13 +118,20 @@ def _validate_intent_order(intents: list[IntentCandidate]) -> None:
         raise ValueError("intents must be ordered by descending confidence")
 
 
+def _validate_route_intents(route: RouteKey, intents: list[IntentCandidate]) -> None:
+    """Training may be classified at the primary-route level only."""
+
+    if route != "training_business" and not intents:
+        raise ValueError("non-training routes require at least one intent")
+
+
 class IntentResult(ContractModel):
     """The public runtime result. It intentionally contains no debug fields."""
 
     request_id: str = Field(min_length=1, max_length=128)
     text: str = Field(min_length=1)
     route: RouteKey
-    intents: list[IntentCandidate] = Field(min_length=1)
+    intents: list[IntentCandidate]
     slots: list[SlotValue] = Field(default_factory=list)
     risk: RiskInfo | None = None
     need_clarification: bool
@@ -132,6 +139,7 @@ class IntentResult(ContractModel):
 
     @model_validator(mode="after")
     def valid_runtime_invariants(self) -> IntentResult:
+        _validate_route_intents(self.route, self.intents)
         _validate_intent_order(self.intents)
         _validate_clarification(self.route, self.need_clarification, self.clarification)
         return self
@@ -141,7 +149,7 @@ class LLMStructuredIntentOutput(ContractModel):
     """Strict model output, including trace-only reasoning and evidence."""
 
     route: RouteKey
-    intents: list[IntentCandidate] = Field(min_length=1)
+    intents: list[IntentCandidate]
     slots: list[SlotValue] = Field(default_factory=list)
     risk: RiskInfo | None = None
     need_clarification: bool
@@ -151,6 +159,7 @@ class LLMStructuredIntentOutput(ContractModel):
 
     @model_validator(mode="after")
     def valid_llm_invariants(self) -> LLMStructuredIntentOutput:
+        _validate_route_intents(self.route, self.intents)
         _validate_intent_order(self.intents)
         _validate_clarification(self.route, self.need_clarification, self.clarification)
         return self
@@ -290,7 +299,9 @@ def validate_runtime_config_snapshot(
     """Validate a release/draft business snapshot at the pure-contract boundary."""
 
     if isinstance(snapshot, RuntimeConfigSnapshot):
-        return snapshot
+        # Pydantic accepts an instance as already valid. Reconstructing from its
+        # JSON representation deliberately catches later in-memory mutation.
+        return RuntimeConfigSnapshot.model_validate(snapshot.model_dump(mode="json"))
     return RuntimeConfigSnapshot.model_validate(snapshot)
 
 
@@ -367,7 +378,8 @@ def validate_llm_output(
     All other snapshot contradictions are fatal business validation errors.
     """
 
-    intent_by_name = {item.name: item for item in snapshot.active_intents}
+    config = validate_runtime_config_snapshot(snapshot)
+    intent_by_name = {item.name: item for item in config.active_intents}
     normalized_intents: list[IntentCandidate] = []
     for candidate in output.intents:
         configured = intent_by_name.get(candidate.name)
@@ -381,7 +393,7 @@ def validate_llm_output(
             IntentCandidate(name=configured.name, zh=configured.zh, confidence=candidate.confidence)
         )
 
-    slots_by_name = {item.name: item for item in snapshot.active_slots}
+    slots_by_name = {item.name: item for item in config.active_slots}
     normalized_slots: list[SlotValue] = []
     issues: list[OutputValidationIssue] = []
     for slot in output.slots:
@@ -391,7 +403,7 @@ def validate_llm_output(
         enum_value: EnumValueDefinition | None = None
         if configured_slot.value_type == "enum":
             assert configured_slot.enum_group is not None
-            enum_value = _find_enum_value(snapshot.enums[configured_slot.enum_group], slot.value)
+            enum_value = _find_enum_value(config.enums[configured_slot.enum_group], slot.value)
             if enum_value is None:
                 raise BusinessOutputValidationError(
                     f"slot {slot.name} value is not in enum {configured_slot.enum_group}"
@@ -425,9 +437,7 @@ def validate_llm_output(
     )
 
 
-def _find_enum_value(
-    values: list[EnumValueDefinition], value: str
-) -> EnumValueDefinition | None:
+def _find_enum_value(values: list[EnumValueDefinition], value: str) -> EnumValueDefinition | None:
     for enum_value in values:
         if enum_value.enabled and value in _enum_forms(enum_value):
             return enum_value
