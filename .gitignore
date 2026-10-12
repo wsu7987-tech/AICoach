@@ -9,4 +9,4 @@ __pycache__/
 *.py[cod]
 .DS_Store
 .tmp
-
+.tmp-task002-mysql
