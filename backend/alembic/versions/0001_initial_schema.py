@@ -32,7 +32,10 @@ def _created_at() -> sa.Column:
 def upgrade() -> None:
     op.create_table(
         "config_draft",
-        _id(),
+        # This is a singleton row whose id is explicitly assigned as 1 by
+        # bootstrap. MySQL does not allow a CHECK constraint to reference an
+        # AUTO_INCREMENT column.
+        sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=False),
         sa.Column("schema_version", sa.Integer(), nullable=False),
         sa.Column("draft_json", JSON, nullable=False),
         sa.Column("updated_by", sa.String(length=128), nullable=False),

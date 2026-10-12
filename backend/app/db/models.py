@@ -30,7 +30,7 @@ class ConfigDraft(Base):
     __tablename__ = "config_draft"
     __table_args__ = (CheckConstraint("id = 1", name="ck_config_draft_singleton"),)
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
     schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
     draft_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
     updated_by: Mapped[str] = mapped_column(String(128), nullable=False)
