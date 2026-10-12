@@ -91,6 +91,36 @@ async def _rename_table(source_name: str, target_name: str) -> None:
         await database.dispose()
 
 
+async def _simulate_interrupted_release_fingerprint_upgrade() -> str | None:
+    """Leave the exact MySQL DDL state from the former overlong revision."""
+
+    database = _database()
+    try:
+        async with database.engine.begin() as connection:
+            await connection.execute(
+                text("ALTER TABLE config_release DROP INDEX uq_config_release_release_fingerprint")
+            )
+            await connection.execute(
+                text(
+                    "CREATE INDEX ix_config_release_release_fingerprint "
+                    "ON config_release (release_fingerprint)"
+                )
+            )
+        async with database.engine.connect() as connection:
+            return await connection.scalar(text("SELECT version_num FROM alembic_version"))
+    finally:
+        await database.dispose()
+
+
+async def _alembic_version() -> str | None:
+    database = _database()
+    try:
+        async with database.engine.connect() as connection:
+            return await connection.scalar(text("SELECT version_num FROM alembic_version"))
+    finally:
+        await database.dispose()
+
+
 def test_mysql_migration_bootstrap_constraints_and_readiness() -> None:
     _alembic("downgrade", "base")
     upgrade = _alembic("upgrade", "head")
@@ -334,7 +364,9 @@ def test_mysql_release_fingerprint_revision_preserves_existing_releases() -> Non
             await database.dispose()
 
     existing_release_id = asyncio.run(seed_0001_release())
+    assert asyncio.run(_simulate_interrupted_release_fingerprint_upgrade()) == "0001_initial_schema"
     _alembic("upgrade", "head")
+    assert asyncio.run(_alembic_version()) == "0002_release_fp_index"
 
     async def verify_0002_release_behavior() -> None:
         database = _database()

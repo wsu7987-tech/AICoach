@@ -5,7 +5,7 @@
 | Task | 状态 | 备注 |
 |---|---|---|
 | TASK-001 工程骨架与API边界 | ✅ | Vue/Vite/Element Plus 与 FastAPI 骨架完成；API 边界、Settings、request_id、错误模型、readiness、测试与构建验证通过 |
-| TASK-002 MySQL、Migration与Bootstrap | 🚧 | 独立复核发现 R-001/R-002 P0，正在修复 Release 指纹约束与 schema readiness |
+| TASK-002 MySQL、Migration与Bootstrap | 🚧 | R-001/R-002 已修复；R-003（0002 revision ID 超长及半完成重试）已完成代码与本地验证，等待隔离 MySQL 8 真实复验 |
 | TASK-101 Intent Contract与PromptBuilder | ⬜ | |
 | TASK-102 Qwen Provider与IntentService | ⬜ | |
 | TASK-201 在线配置与Release | ⬜ | |

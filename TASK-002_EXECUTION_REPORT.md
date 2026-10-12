@@ -1,5 +1,11 @@
 # TASK-002 执行复核报告
 
+> **2026-10-12 R-003 修复增补（当前有效）**：独立复核发现 `0002_release_fingerprint_nonunique` 的 revision ID 长度为 34，超过 MySQL Alembic `alembic_version.version_num VARCHAR(32)`。该 revision 已替换为稳定的 20 字符 ID `0002_release_fp_index`；未修改已应用的 `0001_initial_schema`。
+>
+> 新迁移在在线 MySQL 模式查询 `information_schema.STATISTICS`，支持两种安全状态：正常的 0001 唯一索引状态，以及旧超长 revision 已执行“删除唯一索引、创建普通索引”但尚未更新 `alembic_version` 的半完成状态。后一状态重试 `upgrade head` 只写入新版本号，不会再次删除不存在的索引。新增集成测试会显式构造该半完成状态并验证保留原有 Release、允许相同 fingerprint 的不同 version、拒绝重复 version；另新增 revision ID 长度回归测试。
+>
+> 本轮本地结果为 **13 PASS、2 SKIP、0 FAIL**（两个 SKIP 是受 `MYSQL_TEST_DATABASE_URL` 保护的真实 MySQL 测试）。`ruff check` 与格式检查通过，离线 MySQL upgrade SQL 确认写入 `0002_release_fp_index`，downgrade SQL 可生成。未配置可破坏的隔离 MySQL URL；本机 3306 虽在监听，但 root 无密码认证被拒绝，故未对任何既有数据库进行写入。真实 MySQL 8 的空库、半完成状态恢复和端到端复验仍为 **BLOCKED**，不得据此将 TASK-002 标记完成或启动 TASK-101。
+
 执行日期：2026-10-12（Asia/Tokyo）  
 执行基线：v1.2.4；分支：`main`；开始时 HEAD：`2fdc0e05a41ff655315993d22c7ae8304f459f95`。  
 实现 checkpoint commit SHA：`77a30f993b7ef7a14952ee0bc067be63a55edc65`。后续真实 MySQL 验收发现 `config_draft` 单例 ID 的 AUTO_INCREMENT/CHECK 定义不兼容 MySQL 8.0.32，已同步修复 Alembic Migration、ORM 与回归测试。
