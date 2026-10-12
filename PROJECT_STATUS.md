@@ -6,7 +6,7 @@
 |---|---|---|
 | TASK-001 工程骨架与API边界 | ✅ | Vue/Vite/Element Plus 与 FastAPI 骨架完成；API 边界、Settings、request_id、错误模型、readiness、测试与构建验证通过 |
 | TASK-002 MySQL、Migration与Bootstrap | ✅ | R-001/R-002/R-003 与 N-001/N-002 均已完成；真实 MySQL 8.0.32 全量测试 15 PASS，`/ready` 已覆盖九表全部 126 字段、缺列 503/恢复 200、无 Active Release/Model Config 仍为 200 |
-| TASK-101 Intent Contract与PromptBuilder | ⬜ | |
+| TASK-101 Intent Contract与PromptBuilder | 🟡 | 实现与本地 locked 验证完成；等待独立 AI 复核 |
 | TASK-102 Qwen Provider与IntentService | ⬜ | |
 | TASK-201 在线配置与Release | ⬜ | |
 | TASK-103 Trace与Runtime API | ⬜ | |
@@ -18,4 +18,4 @@
 ## UV migration
 
 - Completed after the TASK-002 final gate: `backend/uv.lock` is committed, `backend/.venv` is reproducible with `uv sync --locked --extra dev`, and the uv-based Ruff, pytest, Alembic, FastAPI startup, and real MySQL 8 checks passed.
-- TASK-101 remains not started and requires explicit confirmation before work begins.
+- TASK-101 implementation is complete and awaits independent AI review before TASK-102 may begin.
