@@ -8,6 +8,10 @@ version = "1.2.4.0"
 description = "AI Coach Intent Router FastAPI service"
 requires-python = ">=3.12"
 dependencies = [
+  "SQLAlchemy>=2.0,<2.1",
+  "alembic>=1.13,<2",
+  "asyncmy>=0.2,<1",
+  "greenlet>=3,<4",
   "fastapi>=0.115,<1",
   "pydantic>=2.7,<3",
   "pydantic-settings>=2.2,<3",

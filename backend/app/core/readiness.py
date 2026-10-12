@@ -38,7 +38,10 @@ class ReadinessChecker:
         results: dict[str, str] = {}
         ready = True
         for name, check in self._checks.items():
-            passed = await check()
+            try:
+                passed = await check()
+            except Exception:
+                passed = False
             results[name] = "ok" if passed else "failed"
             ready = ready and passed
         return ReadinessReport(

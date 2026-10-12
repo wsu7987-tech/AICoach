@@ -1,5 +1,6 @@
 import logging
 import time
+from contextlib import asynccontextmanager
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -14,6 +15,8 @@ from app.core.logging import configure_logging
 from app.core.readiness import ReadinessChecker
 from app.core.request_context import request_id_context
 from app.core.settings import Settings, get_settings
+from app.db.database import Database
+from app.db.readiness import DatabaseSchemaReadiness
 from app.schemas.errors import ErrorEnvelope
 
 logger = logging.getLogger(__name__)
@@ -46,10 +49,34 @@ def create_app(
 ) -> FastAPI:
     app_settings = settings or get_settings()
     configure_logging(app_settings.log_level)
+    database = Database(app_settings) if app_settings.database_url else None
     checker = readiness_checker or ReadinessChecker()
+    if readiness_checker is None:
+        if database is None:
 
-    app = FastAPI(title=app_settings.app_name, version="1.2.4", docs_url="/docs")
+            async def database_not_configured() -> bool:
+                return False
+
+            checker.register("database", database_not_configured)
+        else:
+            checker.register("database", DatabaseSchemaReadiness(database.engine))
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        try:
+            yield
+        finally:
+            if database is not None:
+                await database.dispose()
+
+    app = FastAPI(
+        title=app_settings.app_name,
+        version="1.2.4",
+        docs_url="/docs",
+        lifespan=lifespan,
+    )
     app.state.settings = app_settings
+    app.state.database = database
     app.state.readiness_checker = checker
 
     @app.middleware("http")

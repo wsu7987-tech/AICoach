@@ -1,4 +1,4 @@
-.PHONY: backend-install backend-test backend-lint backend-format frontend-install frontend-lint frontend-format frontend-build test lint format build
+.PHONY: backend-install backend-test backend-lint backend-format backend-bootstrap frontend-install frontend-lint frontend-format frontend-build test lint format build
 
 backend-install:
 	python -m pip install -e "backend[dev]"
@@ -11,6 +11,9 @@ backend-lint:
 
 backend-format:
 	ruff format --check backend/app backend/tests
+
+backend-bootstrap:
+	cd backend && python -m app.bootstrap.cli --file ../bootstrap/initial-config.v1.json
 
 frontend-install:
 	cd frontend && npm install

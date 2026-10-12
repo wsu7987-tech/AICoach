@@ -1,5 +1,9 @@
 from fastapi.testclient import TestClient
 
+from app.core.readiness import ReadinessChecker
+from app.core.settings import Settings
+from app.main import create_app
+
 
 def test_app_import_and_health(client: TestClient) -> None:
     response = client.get("/health")
@@ -39,12 +43,46 @@ def test_runtime_and_admin_boundaries_are_separate(client: TestClient) -> None:
     assert admin.json()["scope"] == "admin"
 
 
-def test_ready_explicitly_reports_uninitialized_checks(client: TestClient) -> None:
+def test_ready_reports_database_as_unavailable_when_database_url_is_not_configured(
+    client: TestClient,
+) -> None:
     response = client.get("/ready")
 
     assert response.status_code == 503
     assert response.json() == {
         "status": "not_ready",
-        "checks": {"database": "not_initialized", "config": "not_initialized"},
-        "message": "DB/config checker not initialized",
+        "checks": {"database": "failed"},
+        "message": "readiness checks failed",
+    }
+
+
+def test_ready_reports_database_as_unavailable_when_connection_fails() -> None:
+    settings = Settings(
+        _env_file=None,
+        database_url="mysql+asyncmy://127.0.0.1:1/unavailable",
+        environment="test",
+        log_level="WARNING",
+    )
+    with TestClient(create_app(settings=settings)) as client:
+        response = client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["checks"] == {"database": "failed"}
+
+
+def test_ready_does_not_require_active_release_or_model_config() -> None:
+    async def database_schema_is_ready() -> bool:
+        return True
+
+    checker = ReadinessChecker()
+    checker.register("database", database_schema_is_ready)
+    settings = Settings(_env_file=None, environment="test", log_level="WARNING")
+    with TestClient(create_app(settings=settings, readiness_checker=checker)) as client:
+        response = client.get("/ready")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ready",
+        "checks": {"database": "ok"},
+        "message": "ready",
     }

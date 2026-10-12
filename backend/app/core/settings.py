@@ -7,8 +7,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Environment-backed settings shared by the API process.
 
-    Database and provider fields are reserved configuration only in TASK-001. Their
-    clients and runtime use are intentionally implemented by later tasks.
+    Secrets remain deployment supplied; database clients are created by the
+    database package rather than at import time.
     """
 
     model_config = SettingsConfigDict(
@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     request_id_header: str = "X-Request-ID"
 
-    database_url: str = "mysql+asyncmy://user:password@localhost:3306/ai_coach"
+    database_url: str | None = None
     qwen_api_key: str | None = Field(default=None, repr=False)
 
     max_text_chars: int = 2000
