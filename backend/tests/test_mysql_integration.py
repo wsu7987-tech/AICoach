@@ -91,6 +91,25 @@ async def _rename_table(source_name: str, target_name: str) -> None:
         await database.dispose()
 
 
+async def _drop_and_restore_release_snapshot_column(*, restore: bool = False) -> None:
+    database = _database()
+    try:
+        async with database.engine.begin() as connection:
+            if restore:
+                await connection.execute(
+                    text(
+                        "ALTER TABLE config_release "
+                        "ADD COLUMN snapshot_json JSON NOT NULL AFTER version"
+                    )
+                )
+            else:
+                await connection.execute(
+                    text("ALTER TABLE config_release DROP COLUMN snapshot_json")
+                )
+    finally:
+        await database.dispose()
+
+
 async def _simulate_interrupted_release_fingerprint_upgrade() -> str | None:
     """Leave the exact MySQL DDL state from the former overlong revision."""
 
@@ -310,6 +329,20 @@ def test_mysql_migration_bootstrap_constraints_and_readiness() -> None:
         ready = client.get("/ready")
         assert ready.status_code == 200
         assert ready.json()["checks"] == {"database": "ok"}
+
+        # Bootstrap does not create a Release, so this also proves `/ready` does
+        # not depend on an Active Release or a Model Config row.
+        asyncio.run(_drop_and_restore_release_snapshot_column())
+        try:
+            incomplete_columns = client.get("/ready")
+            assert incomplete_columns.status_code == 503
+            assert incomplete_columns.json()["checks"] == {"database": "failed"}
+        finally:
+            asyncio.run(_drop_and_restore_release_snapshot_column(restore=True))
+
+        restored_schema = client.get("/ready")
+        assert restored_schema.status_code == 200
+        assert restored_schema.json()["checks"] == {"database": "ok"}
 
         asyncio.run(_rename_table("evaluation_case_result", "evaluation_case_result_missing"))
         try:
