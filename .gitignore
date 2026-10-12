@@ -1,5 +1,6 @@
 .env
 backend/.env
+.venv/
 backend/.pytest_cache/
 backend/.ruff_cache/
 backend/*.egg-info/

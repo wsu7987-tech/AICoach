@@ -91,10 +91,10 @@
 后端使用 Python 3.12+，前端使用 Node.js 20+。
 
 ```powershell
-python -m pip install -e "backend[dev]"
-python -m pytest backend/tests
-ruff check backend/app backend/tests
-ruff format --check backend/app backend/tests
+uv sync --project backend --extra dev
+uv run --project backend pytest backend/tests
+uv run --project backend ruff check backend/app backend/tests
+uv run --project backend ruff format --check backend/app backend/tests
 
 Set-Location frontend
 npm install
@@ -107,7 +107,7 @@ npm run build
 
 ```powershell
 # backend
-python -m uvicorn app.main:app --app-dir backend --reload
+uv run --project backend uvicorn app.main:app --app-dir backend --reload
 
 # frontend（另开一个终端）
 Set-Location frontend

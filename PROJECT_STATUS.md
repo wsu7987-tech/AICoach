@@ -14,3 +14,8 @@
 | TASK-301 批量评测闭环 | ⬜ | |
 | TASK-401 生产部署与主系统接入 | ⬜ | |
 | TASK-501 自动化测试与E2E验收 | ⬜ | |
+
+## UV migration
+
+- Completed after the TASK-002 final gate: `backend/uv.lock` is committed, `backend/.venv` is reproducible with `uv sync --locked --extra dev`, and the uv-based Ruff, pytest, Alembic, FastAPI startup, and real MySQL 8 checks passed.
+- TASK-101 remains not started and requires explicit confirmation before work begins.
