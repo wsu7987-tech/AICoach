@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from app.bootstrap.service import BootstrapValidationError, parse_bootstrap_json
-from app.db.models import ConfigDraft
+from app.db.models import ConfigDraft, ConfigRelease
 
 BOOTSTRAP_PATH = Path(__file__).resolve().parents[2] / "bootstrap" / "initial-config.v1.json"
 
@@ -45,3 +45,10 @@ def test_config_draft_uses_explicit_singleton_id() -> None:
     id_column = ConfigDraft.__table__.c.id
 
     assert id_column.autoincrement is False
+
+
+def test_release_fingerprint_is_indexed_but_not_unique() -> None:
+    fingerprint_column = ConfigRelease.__table__.c.release_fingerprint
+
+    assert fingerprint_column.unique is None
+    assert fingerprint_column.index is True

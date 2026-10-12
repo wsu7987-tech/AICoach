@@ -71,7 +71,7 @@ class ConfigRelease(Base):
         BigInteger, ForeignKey("model_config.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     model_config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    release_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    release_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     note: Mapped[str] = mapped_column(Text, nullable=False)
     created_by: Mapped[str] = mapped_column(String(128), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(fsp=6), nullable=False, default=_utc_now)

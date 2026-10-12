@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, func, inspect, select
+from sqlalchemy import delete, func, inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 
@@ -30,6 +30,7 @@ from app.db.models import (
     EvaluationRun,
     IntentRequestTrace,
     LLMCallTrace,
+    ModelConfig,
     RuntimeState,
 )
 from app.db.readiness import DatabaseSchemaReadiness
@@ -79,6 +80,15 @@ def _alembic(*arguments: str) -> subprocess.CompletedProcess[str]:
 
 def _database() -> Database:
     return Database(Settings(_env_file=None, database_url=_require_isolated_mysql()))
+
+
+async def _rename_table(source_name: str, target_name: str) -> None:
+    database = _database()
+    try:
+        async with database.engine.begin() as connection:
+            await connection.execute(text(f"RENAME TABLE {source_name} TO {target_name}"))
+    finally:
+        await database.dispose()
 
 
 def test_mysql_migration_bootstrap_constraints_and_readiness() -> None:
@@ -268,8 +278,133 @@ def test_mysql_migration_bootstrap_constraints_and_readiness() -> None:
     settings = Settings(_env_file=None, database_url=_require_isolated_mysql(), log_level="WARNING")
     with TestClient(create_app(settings=settings)) as client:
         ready = client.get("/ready")
-    assert ready.status_code == 200
-    assert ready.json()["checks"] == {"database": "ok"}
+        assert ready.status_code == 200
+        assert ready.json()["checks"] == {"database": "ok"}
 
+        asyncio.run(_rename_table("evaluation_case_result", "evaluation_case_result_missing"))
+        try:
+            incomplete_schema = client.get("/ready")
+            assert incomplete_schema.status_code == 503
+            assert incomplete_schema.json()["checks"] == {"database": "failed"}
+        finally:
+            asyncio.run(_rename_table("evaluation_case_result_missing", "evaluation_case_result"))
+
+    _alembic("downgrade", "base")
+    _alembic("upgrade", "head")
+
+
+def test_mysql_release_fingerprint_revision_preserves_existing_releases() -> None:
+    _alembic("downgrade", "base")
+    _alembic("upgrade", "0001_initial_schema")
+
+    async def seed_0001_release() -> int:
+        database = _database()
+        try:
+            async with database.transaction() as session:
+                model_config = ModelConfig(
+                    name="test-model",
+                    version="v1",
+                    provider="test",
+                    model="test-model",
+                    base_url="https://example.invalid/v1",
+                    params_json={},
+                    timeout_seconds=1.0,
+                    max_retries=0,
+                    max_concurrency=1,
+                    structured_output_mode="json_schema",
+                    credential_ref="TEST_CREDENTIAL_REF",
+                    model_config_hash="a" * 64,
+                )
+                session.add(model_config)
+                await session.flush()
+                release = ConfigRelease(
+                    version="release-v1",
+                    snapshot_json={"schema_version": 1},
+                    config_snapshot_hash="b" * 64,
+                    default_model_config_id=model_config.id,
+                    model_config_hash=model_config.model_config_hash,
+                    release_fingerprint="c" * 64,
+                    note="pre-0002 release",
+                    created_by="test",
+                )
+                session.add(release)
+                await session.flush()
+                return release.id
+        finally:
+            await database.dispose()
+
+    existing_release_id = asyncio.run(seed_0001_release())
+    _alembic("upgrade", "head")
+
+    async def verify_0002_release_behavior() -> None:
+        database = _database()
+        try:
+            async with database.transaction() as session:
+                existing = await session.get(ConfigRelease, existing_release_id)
+                assert existing is not None
+                assert existing.version == "release-v1"
+                assert existing.release_fingerprint == "c" * 64
+
+                session.add(
+                    ConfigRelease(
+                        version="release-v2",
+                        snapshot_json=existing.snapshot_json,
+                        config_snapshot_hash=existing.config_snapshot_hash,
+                        default_model_config_id=existing.default_model_config_id,
+                        model_config_hash=existing.model_config_hash,
+                        release_fingerprint=existing.release_fingerprint,
+                        note="same immutable configuration, new release version",
+                        created_by="test",
+                    )
+                )
+
+            with pytest.raises(IntegrityError):
+                async with database.transaction() as session:
+                    session.add(
+                        ConfigRelease(
+                            version="release-v2",
+                            snapshot_json={"schema_version": 1},
+                            config_snapshot_hash="b" * 64,
+                            default_model_config_id=1,
+                            model_config_hash="a" * 64,
+                            release_fingerprint="different-fingerprint",
+                            note="duplicate version must fail",
+                            created_by="test",
+                        )
+                    )
+                    await session.flush()
+
+            async with database.engine.connect() as connection:
+                indexes = await connection.run_sync(
+                    lambda sync: inspect(sync).get_indexes("config_release")
+                )
+                unique_constraints = await connection.run_sync(
+                    lambda sync: inspect(sync).get_unique_constraints("config_release")
+                )
+            fingerprint_index = next(
+                index
+                for index in indexes
+                if index["name"] == "ix_config_release_release_fingerprint"
+            )
+            assert fingerprint_index["unique"] is False
+            assert {constraint["name"] for constraint in unique_constraints} == {
+                "uq_config_release_version"
+            }
+        finally:
+            await database.dispose()
+
+    asyncio.run(verify_0002_release_behavior())
+
+    async def remove_duplicate_release_for_reversible_test_cleanup() -> None:
+        database = _database()
+        try:
+            async with database.transaction() as session:
+                await session.execute(
+                    delete(ConfigRelease).where(ConfigRelease.version == "release-v2")
+                )
+        finally:
+            await database.dispose()
+
+    asyncio.run(remove_duplicate_release_for_reversible_test_cleanup())
     _alembic("downgrade", "base")
     _alembic("upgrade", "head")

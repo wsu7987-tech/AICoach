@@ -4,9 +4,13 @@
 执行基线：v1.2.4；分支：`main`；开始时 HEAD：`2fdc0e05a41ff655315993d22c7ae8304f459f95`。  
 实现 checkpoint commit SHA：`77a30f993b7ef7a14952ee0bc067be63a55edc65`。后续真实 MySQL 验收发现 `config_draft` 单例 ID 的 AUTO_INCREMENT/CHECK 定义不兼容 MySQL 8.0.32，已同步修复 Alembic Migration、ORM 与回归测试。
 
+> **2026-10-12 独立复核 P0 修复增补：** 独立复核（`TASK-002_INDEPENDENT_REVIEW.md`）否决了此前的完成结论，发现 R-001（`release_fingerprint` 错误唯一）和 R-002（head 但缺失业务表时 `/ready` 误报 200）。当前已新增 `0002_release_fingerprint_nonunique`、取消 ORM 唯一约束并加入 fingerprint 普通索引；readiness 也已要求 9 张业务表全部存在。此前本报告中关于 TASK-002 “已完成”的结论不再有效；待当前 P0 修复在隔离 MySQL 8 中完成复验和独立复核前，`PROJECT_STATUS.md` 保持 🚧，不得进入 TASK-101。
+
+> **本轮实际验证：** Ruff 通过；`pytest` 为 12 PASS、2 SKIP（两项均为受 `MYSQL_TEST_DATABASE_URL` 保护的真实 MySQL 测试）；新版 Migration 的 MySQL offline upgrade/downgrade SQL 均成功生成，确认会删除 `uq_config_release_release_fingerprint` 并创建普通索引。独立复核曾使用的 `127.0.0.1:33307` 临时实例当前不可连接。本轮尝试在工作区外启动新的临时 MySQL 8.0.32 实例也因该 Windows 安装的本地 TCP/权限表启动异常而失败；仅停止了该临时进程，未以 mock/SQLite 替代验收。因此 R-001/R-002 的真实 MySQL 复验仍为 BLOCKED，不能标记 TASK-002 完成。
+
 ## 结论
 
-实现和可重复的真实 MySQL 8 集成测试已通过，TASK-002 验收状态为 **PASS / 已完成**。`PROJECT_STATUS.md` 已将 TASK-002 标记为完成，TASK-101 前置条件满足。
+原始实现和真实 MySQL 8 集成测试曾通过；但独立复核已发现两个 P0，TASK-002 当前验收状态为 **修复中 / 未完成**。`PROJECT_STATUS.md` 已恢复为 TASK-002 进行中，TASK-101 前置条件未满足。
 
 验收数据库：Windows 本地 MySQL Community Server 8.0.32，隔离测试库 `ai_coach_task002_test_local`。未使用生产数据库、SQLite 或 mock 替代真实 MySQL 验收。
 
