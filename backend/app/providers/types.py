@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -40,6 +41,19 @@ class LLMResponse(ProviderModel):
     content: str
     attempts: list[LLMAttempt]
     response_mode: str
+
+
+class ProviderCancelledError(asyncio.CancelledError):
+    """Cancellation that carries diagnostics for HTTP requests already sent.
+
+    It remains an asyncio cancellation, so callers must not treat it as a
+    model/provider business failure.  An empty list means cancellation happened
+    before this Provider issued a physical HTTP request.
+    """
+
+    def __init__(self, attempts: list[LLMAttempt]) -> None:
+        super().__init__("provider invocation cancelled")
+        self.attempts = attempts
 
 
 class LLMProvider(Protocol):

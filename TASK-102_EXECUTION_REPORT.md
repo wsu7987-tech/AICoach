@@ -149,3 +149,40 @@ TASK-201 can use `RuntimeConfiguration(snapshot, model_config_snapshot)` from th
 and `TraceSink` protocols directly. It must preserve this task's immutable Model Config snapshot,
 the selected structured-output mode, and the provider instance/config pairing. Before TASK-103,
 the required Provider/IntentService ↔ Release/ModelConfig interface review remains mandatory.
+
+## Independent-review remediation (P1-1 / P1-2)
+
+The independent review reported P1-1 and P1-2 against `ed30115`. This follow-up changes only
+those two items; it does not begin TASK-201 or redesign the Provider.
+
+- P1-1: `ProviderCancelledError` is an `asyncio.CancelledError` subtype carrying only the
+  Attempts already made. An in-flight HTTP cancellation appends a sanitized `status="cancelled"`
+  Attempt with elapsed time, then propagates cancellation. IntentService writes the carried
+  Attempts to TraceSink with `cancelled=true` and no business error code, then re-raises the
+  cancellation. Cancellation in semaphore waiting has an empty Attempt list, while cancellation
+  during retry backoff preserves the preceding failed Attempt and sends no retry. The semaphore's
+  existing `finally` continues to release acquired permits.
+- P1-2: sanitizer coverage now includes prose forms (`password is …`, `token is …`,
+  `API key is …`), `Bearer …`, nested lists, embedded JSON strings, and error strings. Raw
+  request/response and error paths all use this same sanitizer.
+- P2-1 is intentionally deferred: no second Provider exists in TASK-102, and no unrelated
+  interface redesign was needed for cancellation propagation. The cancellation carrier lives in
+  the provider-neutral `types` module.
+
+New real-local-HTTP tests cover in-flight cancellation through TraceSink and subsequent permit
+reuse, backoff cancellation, pre-send queue-wait cancellation, and natural-language secret
+redaction in an actual serialized `LLMAttempt` request.
+
+Final remediation gate, run from `backend/`:
+
+```text
+$ uv run --locked --extra dev ruff check .
+All checks passed!
+
+$ uv run --locked --extra dev ruff format --check .
+43 files already formatted
+
+$ uv run --locked --extra dev pytest -q -rs
+...........................................ss..........................  [100%]
+SKIPPED [2] tests\test_mysql_integration.py:57: MYSQL_TEST_DATABASE_URL is not configured; MySQL 8 integration tests are skipped
+```

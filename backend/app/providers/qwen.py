@@ -14,15 +14,17 @@ import openai
 from openai import AsyncOpenAI
 
 from app.core.errors import AppError, ErrorCode
-from app.providers.types import LLMAttempt, LLMResponse
+from app.providers.types import LLMAttempt, LLMResponse, ProviderCancelledError
 from app.schemas.intent import LLMStructuredIntentOutput, ModelConfigSnapshot, PromptBuildResult
 
 _SENSITIVE_KEYS = frozenset(
     {"authorization", "api_key", "apikey", "secret", "token", "password", "db_password"}
 )
-_INLINE_SECRET = re.compile(
-    r"(?i)\b(authorization|api[_-]?key|secret|token|(?:db[_-]?)?password)\b\s*([:=])\s*([^\s,;]+)"
+_PROSE_SECRET = re.compile(
+    r"(?ix)\b(?P<label>authorization|api[\s_-]*key|secret|token|(?:db[\s_-]?)?password)\b"
+    r"(?P<join>\s*(?:is|=|:)\s*)(?P<bearer>bearer\s+)?(?P<secret>[^\s,;]+)"
 )
+_BEARER_SECRET = re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/=-]+")
 
 
 class ProviderError(AppError):
@@ -87,6 +89,12 @@ class QwenProvider:
                     retry_after=max(1, int(self.queue_wait_timeout)),
                 ) from exc
             return await self._invoke_after_acquire(prompt)
+        except asyncio.CancelledError as exc:
+            if isinstance(exc, ProviderCancelledError):
+                raise
+            # Cancellation before the semaphore is acquired means no HTTP call
+            # was sent and therefore no synthetic Attempt is created.
+            raise ProviderCancelledError([]) from exc
         finally:
             if acquired:
                 self._semaphore.release()
@@ -131,14 +139,20 @@ class QwenProvider:
                     attempts=attempts,
                     response_mode=self.model_config.structured_output_mode,
                 )
-            except asyncio.CancelledError:
-                raise
+            except asyncio.CancelledError as exc:
+                attempts.append(self._cancelled_attempt(attempt_no, request, started))
+                raise ProviderCancelledError(attempts) from exc
             except Exception as exc:  # normalized below, retaining the original SDK category
                 code, status_code, retryable = self._classify_error(exc)
                 attempts.append(self._failed_attempt(attempt_no, request, started, exc, code))
                 if retryable and attempt_no < total_attempts:
                     # asyncio.sleep is cancellable and never blocks the event loop.
-                    await asyncio.sleep(self.backoff_base_seconds * (2 ** (attempt_no - 1)))
+                    try:
+                        await asyncio.sleep(self.backoff_base_seconds * (2 ** (attempt_no - 1)))
+                    except asyncio.CancelledError as cancellation:
+                        # The failed Attempt above is complete.  Backoff has not
+                        # sent another request, so no additional Attempt exists.
+                        raise ProviderCancelledError(attempts) from cancellation
                     continue
                 raise ProviderError(
                     code,
@@ -196,12 +210,17 @@ class QwenProvider:
             try:
                 parsed = json.loads(value)
             except json.JSONDecodeError:
-                return _INLINE_SECRET.sub(r"\1\2[REDACTED]", value)
+                redacted = _PROSE_SECRET.sub(QwenProvider._redact_prose_secret, value)
+                return _BEARER_SECRET.sub("Bearer [REDACTED]", redacted)
             if isinstance(parsed, (dict, list)):
                 return json.dumps(
                     QwenProvider.sanitize(parsed), ensure_ascii=False, separators=(",", ":")
                 )
         return value
+
+    @staticmethod
+    def _redact_prose_secret(match: re.Match[str]) -> str:
+        return f"{match['label']}{match['join']}{match['bearer'] or ''}[REDACTED]"
 
     @staticmethod
     def _parse_if_json(content: str) -> dict[str, Any] | None:
@@ -240,6 +259,21 @@ class QwenProvider:
             status="failed",
             error_code=code,
             error_message=self._safe_error_message(exc),
+        )
+
+    def _cancelled_attempt(
+        self, attempt_no: int, request: dict[str, Any], started: float
+    ) -> LLMAttempt:
+        return LLMAttempt(
+            attempt_no=attempt_no,
+            is_retry=attempt_no > 1,
+            provider="qwen",
+            model=self.model_config.model,
+            params=self._safe_params(request),
+            raw_request=self.sanitize(request),
+            latency_ms=self._elapsed_ms(started),
+            status="cancelled",
+            error_message="model request cancelled by caller",
         )
 
     @staticmethod

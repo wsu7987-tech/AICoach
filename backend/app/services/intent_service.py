@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.core.errors import AppError, ErrorCode
 from app.prompting.builder import PromptBuilder
 from app.providers.qwen import ProviderError
-from app.providers.types import LLMAttempt, LLMProvider
+from app.providers.types import LLMAttempt, LLMProvider, ProviderCancelledError
 from app.schemas.intent import (
     BusinessOutputValidationError,
     IntentAnalyzeRequest,
@@ -48,6 +48,7 @@ class TraceRecord(BaseModel):
     model_config_id: int | None = None
     attempts: list[LLMAttempt] = Field(default_factory=list)
     validation_issues: list[OutputValidationIssue] = Field(default_factory=list)
+    cancelled: bool = False
     error_code: ErrorCode | None = None
     error_message: str | None = None
 
@@ -130,6 +131,11 @@ class IntentService:
             trace.validation_issues = validated.validation_issues
             await self._persist_success(trace)
             return validated.result
+        except ProviderCancelledError as exc:
+            trace.attempts = exc.attempts
+            trace.cancelled = True
+            await self._persist_failure(trace)
+            raise
         except ProviderError as exc:
             trace.attempts = exc.attempts
             trace.error_code = exc.code

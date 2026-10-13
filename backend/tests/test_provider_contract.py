@@ -22,6 +22,7 @@ from pydantic import ValidationError
 from app.core.errors import ErrorCode
 from app.prompting.builder import PromptBuilder
 from app.providers.qwen import ProviderError, QwenProvider
+from app.providers.types import ProviderCancelledError
 from app.schemas.intent import ModelConfigSnapshot, RuntimeConfigSnapshot
 from app.services.intent_service import (
     InMemoryRuntimeConfigLoader,
@@ -53,7 +54,11 @@ class _ScenarioHandler(BaseHTTPRequestHandler):
         self.send_header("content-length", str(len(body)))
         self.send_header("x-request-id", response.get("request_id", "mock-request"))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except BrokenPipeError:
+            # A cancellation test intentionally closes the client side first.
+            return
 
     def log_message(self, format: str, *args: object) -> None:
         return
@@ -124,6 +129,14 @@ def _provider(server: _ScenarioServer, **overrides: Any) -> QwenProvider:
 
 def _prompt() -> Any:
     return PromptBuilder().build(_snapshot(), text="你好")
+
+
+async def _wait_for_requests(server: _ScenarioServer, expected: int) -> None:
+    for _ in range(100):
+        if len(server.request_bodies) >= expected:
+            return
+        await asyncio.sleep(0.005)
+    raise AssertionError(f"server did not receive {expected} request(s)")
 
 
 def test_c11_sdk_retries_are_disabled_and_each_http_request_has_one_attempt(
@@ -229,6 +242,94 @@ def test_queue_wait_timeout_returns_service_busy(scenario_server: _ScenarioServe
 
     error = asyncio.run(invoke_twice())
     assert error.code == ErrorCode.SERVICE_BUSY
+    assert len(scenario_server.request_bodies) == 1
+
+
+def test_in_flight_cancellation_records_attempt_reaches_trace_and_releases_permit(
+    scenario_server: _ScenarioServer,
+) -> None:
+    scenario_server.responses = [
+        {"status": 200, "delay": 0.3, "payload": _completion("{}")},
+        {"status": 200, "payload": _completion("{}")},
+    ]
+    provider = _provider(scenario_server, max_retries=0, timeout_seconds=1)
+    sink = InMemoryTraceSink()
+    service = IntentService(
+        InMemoryRuntimeConfigLoader(
+            _snapshot(), _model_config(provider.base_url, timeout_seconds=1)
+        ),
+        provider,
+        PromptBuilder(),
+        sink,
+    )
+
+    async def cancel_service_call() -> ProviderCancelledError:
+        task = asyncio.create_task(service.analyze(text="cancelling", request_id="cancel-1"))
+        await _wait_for_requests(scenario_server, 1)
+        task.cancel()
+        with pytest.raises(ProviderCancelledError) as raised:
+            await task
+        return raised.value
+
+    cancelled = asyncio.run(cancel_service_call())
+
+    assert len(cancelled.attempts) == 1
+    assert cancelled.attempts[0].status == "cancelled"
+    assert cancelled.attempts[0].latency_ms >= 0
+    assert sink.records[0].cancelled is True
+    assert sink.records[0].error_code is None
+    assert sink.records[0].attempts == cancelled.attempts
+
+    # The cancelled invocation released its permit; the next request is sent.
+    asyncio.run(provider.invoke(_prompt()))
+    assert len(scenario_server.request_bodies) == 2
+
+
+def test_backoff_cancellation_keeps_completed_attempt_and_sends_no_retry(
+    scenario_server: _ScenarioServer,
+) -> None:
+    scenario_server.responses = [{"status": 500, "payload": {"error": {"message": "retry"}}}]
+    provider = _provider(scenario_server, max_retries=1)
+    provider.backoff_base_seconds = 1
+
+    async def cancel_during_backoff() -> ProviderCancelledError:
+        task = asyncio.create_task(provider.invoke(_prompt()))
+        await _wait_for_requests(scenario_server, 1)
+        await asyncio.sleep(0.02)
+        task.cancel()
+        with pytest.raises(ProviderCancelledError) as raised:
+            await task
+        return raised.value
+
+    cancelled = asyncio.run(cancel_during_backoff())
+
+    assert len(scenario_server.request_bodies) == 1
+    assert len(cancelled.attempts) == 1
+    assert cancelled.attempts[0].status == "failed"
+    assert cancelled.attempts[0].error_code == ErrorCode.MODEL_PROVIDER_ERROR
+
+
+def test_queue_wait_cancellation_has_no_synthetic_http_attempt(
+    scenario_server: _ScenarioServer,
+) -> None:
+    scenario_server.responses = [{"status": 200, "delay": 0.1, "payload": _completion("{}")}]
+    provider = _provider(scenario_server, max_retries=0, timeout_seconds=1)
+    provider.queue_wait_timeout = 1
+
+    async def cancel_while_waiting() -> ProviderCancelledError:
+        first = asyncio.create_task(provider.invoke(_prompt()))
+        await _wait_for_requests(scenario_server, 1)
+        waiting = asyncio.create_task(provider.invoke(_prompt()))
+        await asyncio.sleep(0.01)
+        waiting.cancel()
+        with pytest.raises(ProviderCancelledError) as raised:
+            await waiting
+        await first
+        return raised.value
+
+    cancelled = asyncio.run(cancel_while_waiting())
+
+    assert cancelled.attempts == []
     assert len(scenario_server.request_bodies) == 1
 
 
@@ -420,6 +521,9 @@ def test_provider_sanitizes_sensitive_values() -> None:
             "nested": {"api_key": "abc", "safe": "ok"},
             "message": '{"token":"also-hidden","safe":"ok"}',
             "inline": "api_key=also-hidden",
+            "prose": "my password is Tr0ub4dor and token is abc123",
+            "bearer": "Authorization: Bearer abc.def-123",
+            "nested_list": ["the API key is sk-live", {"note": "secret: hidden"}],
         }
     )
 
@@ -428,4 +532,26 @@ def test_provider_sanitizes_sensitive_values() -> None:
         "nested": {"api_key": "[REDACTED]", "safe": "ok"},
         "message": '{"token":"[REDACTED]","safe":"ok"}',
         "inline": "api_key=[REDACTED]",
+        "prose": "my password is [REDACTED] and token is [REDACTED]",
+        "bearer": "Authorization: Bearer [REDACTED]",
+        "nested_list": ["the API key is [REDACTED]", {"note": "secret: [REDACTED]"}],
     }
+
+
+def test_raw_request_redacts_natural_language_secrets(scenario_server: _ScenarioServer) -> None:
+    scenario_server.responses = [{"status": 500, "payload": {"error": {"message": "token is abc"}}}]
+    provider = _provider(scenario_server, max_retries=0)
+    prompt = PromptBuilder().build(
+        _snapshot(),
+        text="My password is Tr0ub4dor; bearer abc.def-123",
+        context={"token": "abc"},
+    )
+
+    with pytest.raises(ProviderError) as raised:
+        asyncio.run(provider.invoke(prompt))
+
+    serialized_attempt = json.dumps(raised.value.attempts[0].model_dump(mode="json"))
+    assert "Tr0ub4dor" not in serialized_attempt
+    assert "abc.def-123" not in serialized_attempt
+    assert 'abc"' not in serialized_attempt
+    assert "[REDACTED]" in serialized_attempt
