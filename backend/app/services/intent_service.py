@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from typing import Any, Protocol
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from app.core.diagnostics import diagnostic_text, error_summary, sanitize
 from app.core.errors import AppError, ErrorCode
 from app.prompting.builder import PromptBuilder
 from app.providers.qwen import ProviderError
-from app.providers.types import LLMAttempt, LLMProvider, ProviderCancelledError
+from app.providers.types import LLMAttempt, LLMProvider, ProviderCancelledError, diagnostic_attempts
 from app.schemas.intent import (
     BusinessOutputValidationError,
     IntentAnalyzeRequest,
@@ -22,6 +25,9 @@ from app.schemas.intent import (
     RuntimeConfigSnapshot,
     validate_llm_output,
 )
+
+logger = logging.getLogger(__name__)
+CANCEL_TRACE_TIMEOUT_SECONDS = 0.1
 
 
 class RuntimeConfiguration(BaseModel):
@@ -52,8 +58,27 @@ class TraceRecord(BaseModel):
     error_code: ErrorCode | None = None
     error_message: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def sanitize_diagnostics(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        clean = sanitize(value)
+        for key in ("text", "request_id"):
+            if key in clean:
+                clean[key] = diagnostic_text(clean[key])
+        if clean.get("error_message") is not None:
+            clean["error_message"] = error_summary(clean["error_message"])
+        return clean
+
 
 class TraceSink(Protocol):
+    """Async writes must yield and propagate cancellation after prompt cleanup.
+
+    No in-process asyncio timeout can preempt synchronous blocking or a coroutine
+    that suppresses cancellation indefinitely. Implementations must not do either.
+    """
+
     async def write(self, trace: TraceRecord) -> None: ...
 
 
@@ -63,8 +88,8 @@ class IntentServiceError(AppError):
     def __init__(
         self, code: ErrorCode, message: str, *, attempts: list[LLMAttempt] | None = None
     ) -> None:
-        super().__init__(code, message, 502)
-        self.attempts = attempts or []
+        super().__init__(code, error_summary(message), 502)
+        self.attempts = diagnostic_attempts(attempts or [])
 
 
 class InMemoryRuntimeConfigLoader:
@@ -131,11 +156,16 @@ class IntentService:
             trace.validation_issues = validated.validation_issues
             await self._persist_success(trace)
             return validated.result
-        except ProviderCancelledError as exc:
-            trace.attempts = exc.attempts
+        except asyncio.CancelledError as exc:
+            cancellation = (
+                exc
+                if isinstance(exc, ProviderCancelledError)
+                else ProviderCancelledError(trace.attempts)
+            )
+            trace.attempts = cancellation.attempts
             trace.cancelled = True
-            await self._persist_failure(trace)
-            raise
+            await self._persist_cancellation(trace, cancellation)
+            raise cancellation from None
         except ProviderError as exc:
             trace.attempts = exc.attempts
             trace.error_code = exc.code
@@ -155,18 +185,18 @@ class IntentService:
             trace.error_code = error.code
             trace.error_message = error.message
             await self._persist_failure(trace)
-            raise error from exc
+            raise error from None
 
     @staticmethod
     def _parse_output(content: str, attempts: list[LLMAttempt]) -> LLMStructuredIntentOutput:
         try:
             payload = json.loads(content)
-        except json.JSONDecodeError as exc:
+        except json.JSONDecodeError:
             raise IntentServiceError(
                 ErrorCode.MODEL_OUTPUT_PARSE_ERROR,
                 "model output is not valid JSON",
                 attempts=attempts,
-            ) from exc
+            ) from None
         if not isinstance(payload, dict):
             raise IntentServiceError(
                 ErrorCode.MODEL_OUTPUT_SCHEMA_ERROR,
@@ -175,23 +205,62 @@ class IntentService:
             )
         try:
             return LLMStructuredIntentOutput.model_validate(payload)
-        except ValidationError as exc:
+        except ValidationError:
             raise IntentServiceError(
                 ErrorCode.MODEL_OUTPUT_SCHEMA_ERROR,
                 "model output does not conform to LLMStructuredIntentOutput",
                 attempts=attempts,
-            ) from exc
+            ) from None
+
+    async def _persist_cancellation(
+        self, trace: TraceRecord, cancellation: ProviderCancelledError
+    ) -> None:
+        # Reparse the complete diagnostic copy immediately before the Sink boundary.
+        safe_trace = TraceRecord.model_validate(trace.model_dump(mode="json"))
+        cancellation.trace_diagnostic = safe_trace.model_dump(mode="json")
+        try:
+            # No child task, shield, uncancel, or second HTTP request. A second
+            # cancellation unwinds write() on this same stack; do not retry it.
+            async with asyncio.timeout(CANCEL_TRACE_TIMEOUT_SECONDS):
+                await self._trace_sink.write(safe_trace)
+        except TimeoutError:
+            cancellation.trace_write_status = "timed_out"
+        except asyncio.CancelledError:
+            cancellation.trace_write_status = "interrupted"
+        except Exception:
+            cancellation.trace_write_status = "failed"
+        else:
+            cancellation.trace_write_status = "written"
+        if cancellation.trace_write_status != "written":
+            # No exception text, user input or raw data in the fallback log.
+            logger.warning(
+                "TRACE_PERSIST_FAILED trace_id=%s status=%s attempts=%d",
+                safe_trace.trace_id,
+                cancellation.trace_write_status,
+                len(safe_trace.attempts),
+            )
+        # There is no await after handling interruption. analyze() re-raises its
+        # original ProviderCancelledError, preserving both identity and Attempts.
 
     async def _persist_success(self, trace: TraceRecord) -> None:
         try:
-            await self._trace_sink.write(trace)
+            await self._trace_sink.write(TraceRecord.model_validate(trace.model_dump(mode="json")))
         except Exception:
             # Runtime business success is fail-open when Trace persistence fails.
+            logger.warning("TRACE_PERSIST_FAILED trace_id=%s", trace.trace_id)
             return
 
     async def _persist_failure(self, trace: TraceRecord) -> None:
         try:
-            await self._trace_sink.write(trace)
+            await self._trace_sink.write(TraceRecord.model_validate(trace.model_dump(mode="json")))
+        except asyncio.CancelledError:
+            # This await runs inside an error handler, outside analyze's try block.
+            # Preserve completed failed Attempts if cancellation arrives here too.
+            cancellation = ProviderCancelledError(trace.attempts)
+            trace.cancelled = True
+            await self._persist_cancellation(trace, cancellation)
+            raise cancellation from None
         except Exception:
             # TASK-103 will distinguish Runtime from Debug/Replay/Evaluation modes.
+            logger.warning("TRACE_PERSIST_FAILED trace_id=%s", trace.trace_id)
             return

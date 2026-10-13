@@ -4,27 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import time
-from collections.abc import Mapping
 from typing import Any
 
 import httpx
 import openai
 from openai import AsyncOpenAI
 
+from app.core.diagnostics import error_summary, sanitize
 from app.core.errors import AppError, ErrorCode
-from app.providers.types import LLMAttempt, LLMResponse, ProviderCancelledError
+from app.providers.types import (
+    LLMAttempt,
+    LLMResponse,
+    ProviderCancelledError,
+    diagnostic_attempts,
+)
 from app.schemas.intent import LLMStructuredIntentOutput, ModelConfigSnapshot, PromptBuildResult
-
-_SENSITIVE_KEYS = frozenset(
-    {"authorization", "api_key", "apikey", "secret", "token", "password", "db_password"}
-)
-_PROSE_SECRET = re.compile(
-    r"(?ix)\b(?P<label>authorization|api[\s_-]*key|secret|token|(?:db[\s_-]?)?password)\b"
-    r"(?P<join>\s*(?:is|=|:)\s*)(?P<bearer>bearer\s+)?(?P<secret>[^\s,;]+)"
-)
-_BEARER_SECRET = re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/=-]+")
 
 
 class ProviderError(AppError):
@@ -39,8 +34,8 @@ class ProviderError(AppError):
         attempts: list[LLMAttempt],
         retry_after: int | None = None,
     ) -> None:
-        super().__init__(code, message, status_code, retry_after=retry_after)
-        self.attempts = attempts
+        super().__init__(code, error_summary(message), status_code, retry_after=retry_after)
+        self.attempts = diagnostic_attempts(attempts)
 
 
 class QwenProvider:
@@ -160,7 +155,7 @@ class QwenProvider:
                     status_code,
                     attempts=attempts,
                     retry_after=self._retry_after(exc),
-                ) from exc
+                ) from None
         raise AssertionError("bounded retry loop must return or raise")
 
     def _build_request(self, prompt: PromptBuildResult) -> dict[str, Any]:
@@ -195,32 +190,8 @@ class QwenProvider:
             },
         }
 
-    @staticmethod
-    def sanitize(value: Any) -> Any:
-        if isinstance(value, Mapping):
-            return {
-                str(key): "[REDACTED]"
-                if str(key).lower().replace("-", "_") in _SENSITIVE_KEYS
-                else QwenProvider.sanitize(item)
-                for key, item in value.items()
-            }
-        if isinstance(value, list):
-            return [QwenProvider.sanitize(item) for item in value]
-        if isinstance(value, str):
-            try:
-                parsed = json.loads(value)
-            except json.JSONDecodeError:
-                redacted = _PROSE_SECRET.sub(QwenProvider._redact_prose_secret, value)
-                return _BEARER_SECRET.sub("Bearer [REDACTED]", redacted)
-            if isinstance(parsed, (dict, list)):
-                return json.dumps(
-                    QwenProvider.sanitize(parsed), ensure_ascii=False, separators=(",", ":")
-                )
-        return value
-
-    @staticmethod
-    def _redact_prose_secret(match: re.Match[str]) -> str:
-        return f"{match['label']}{match['join']}{match['bearer'] or ''}[REDACTED]"
+    # Compatibility alias; Provider, Service and logging share the same policy.
+    sanitize = staticmethod(sanitize)
 
     @staticmethod
     def _parse_if_json(content: str) -> dict[str, Any] | None:
@@ -292,7 +263,16 @@ class QwenProvider:
 
     @staticmethod
     def _safe_error_message(exc: Exception) -> str:
-        return QwenProvider.sanitize({"message": str(exc)})["message"]
+        # SDK str(exc) embeds an untrusted Python repr of the response. Prefer
+        # its structured body; never serialize the SDK request/headers/cause.
+        if isinstance(exc, openai.APIError):
+            summary = {"type": type(exc).__name__}
+            if isinstance(exc, openai.APIStatusError):
+                summary["status_code"] = exc.status_code
+            if exc.body is not None:
+                summary["body"] = sanitize(exc.body)
+            return error_summary(json.dumps(summary, ensure_ascii=False))
+        return error_summary(f"{type(exc).__name__}: {exc}")
 
     @staticmethod
     def _error_response(exc: Exception) -> dict[str, Any] | None:

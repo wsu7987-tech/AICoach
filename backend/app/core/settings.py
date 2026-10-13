@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     max_eval_file_bytes: int = 52_428_800
     max_eval_cases: int = 500
     provider_queue_wait_timeout: float = 2.0
+    trace_raw_max_bytes: int = Field(default=65_536, ge=256)
 
 
 @lru_cache

@@ -4,6 +4,7 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
+from app.core.diagnostics import diagnostic_text, sanitize
 from app.core.request_context import get_request_id
 
 
@@ -15,7 +16,7 @@ class JsonFormatter(logging.Formatter):
             "timestamp": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": diagnostic_text(record.getMessage()),
         }
         request_id = get_request_id()
         if request_id:
@@ -25,8 +26,8 @@ class JsonFormatter(logging.Formatter):
             if value is not None:
                 payload[key] = value
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
-        return json.dumps(payload, ensure_ascii=False, default=str)
+            payload["exception"] = diagnostic_text(self.formatException(record.exc_info))
+        return json.dumps(sanitize(payload), ensure_ascii=False, default=str)
 
 
 def configure_logging(level: str) -> None:
