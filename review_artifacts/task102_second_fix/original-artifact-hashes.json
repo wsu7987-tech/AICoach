@@ -1,0 +1,42 @@
+﻿[
+    {
+        "Path":  "D:\\akae\\AICoach\\review_artifacts\\task102_incremental\\final-independent-output.txt",
+        "Hash":  "6A8F157F3798223F502947C9CFCD3284C3BA725CFCE733850A0B5E47DD5A3B30"
+    },
+    {
+        "Path":  "D:\\akae\\AICoach\\review_artifacts\\task102_incremental\\final-independent-results.xml",
+        "Hash":  "5CFC4FFE3863DC6168CD92FA78F049AFB45931052593005D527E684E74488122"
+    },
+    {
+        "Path":  "D:\\akae\\AICoach\\review_artifacts\\task102_incremental\\independent-output.txt",
+        "Hash":  "CF6AFD3F1DFB27FC9E7EC2C843AD0BF273C5DA382299F8A3C4AF90FCF78FF5BD"
+    },
+    {
+        "Path":  "D:\\akae\\AICoach\\review_artifacts\\task102_incremental\\independent-results.xml",
+        "Hash":  "A9BC2A3E1DBC8B4220E0020A8C52CB85ADF33BCA40A4C92E80C3E0B65674B1ED"
+    },
+    {
+        "Path":  "D:\\akae\\AICoach\\review_artifacts\\task102_incremental\\repository-output.txt",
+        "Hash":  "8FCC67C62F4D8E046759647968EE4F2DF670B9049E2237692E5BF49A0A6BC0ED"
+    },
+    {
+        "Path":  "D:\\akae\\AICoach\\review_artifacts\\task102_incremental\\repository-results.xml",
+        "Hash":  "F099B18A5F5731AF7EC2E698BA066E1A477251E93A5F1202C4490BAD72813F2E"
+    },
+    {
+        "Path":  "D:\\akae\\AICoach\\review_artifacts\\task102_incremental\\test_review.py",
+        "Hash":  "4BB0CA2D824A22465640BB04DB0806155CD57BFCCDF6CF2A6353006A59054638"
+    },
+    {
+        "Path":  "D:\\akae\\AICoach\\TASK-102_INDEPENDENT_REVIEW.md",
+        "Hash":  "BF51794115291EA9A044B0EF7EB6FC49F0D63CB3F0733B130DFD59AF54CD76D8"
+    },
+    {
+        "Path":  "D:\\akae\\AICoach\\TASK-102_INCREMENTAL_REVIEW_ed2e8ae.md",
+        "Hash":  "3C797F78B02EF19413A65BC37565FC68279F5D172D8FF2D36FB6F7FBCF407F62"
+    },
+    {
+        "Path":  "D:\\akae\\AICoach\\TASK-102_EXECUTION_REPORT.md",
+        "Hash":  "4AFE0712F6C1ADB807C2C6DF39403F160BACF6D3011B4B53E35484769315180F"
+    }
+]

@@ -1,0 +1,21 @@
+Baseline: ed2e8ae4eb329d4314e0347ca8d781f216bb8dc7
+Original independent probe existed before any implementation edits.
+Run from backend:
+uv run --locked --extra dev pytest -o addopts='' -q -rs --tb=short ../review_artifacts/task102_incremental/test_review.py
+
+Actual terminal summary (exit 1):
+9 failed, 23 passed in 30.06s
+
+Failed cases observed in that run:
+test_cancel_sink_failure_boundary[block]
+test_cancel_sink_failure_boundary[repeat_cancel]
+test_full_diagnostic_redaction[trace_text]
+test_full_diagnostic_redaction[parsed_payload]
+test_full_diagnostic_redaction[provider_error]
+test_full_diagnostic_redaction[business_error]
+test_full_diagnostic_redaction[cancel_trace]
+test_full_diagnostic_redaction[cancel_params]
+test_diagnostics_have_size_limit
+
+This file records the observed summary/case names, not a reconstructed full traceback.
+Original historical tracebacks remain untouched in ../task102_incremental/.
