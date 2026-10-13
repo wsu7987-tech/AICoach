@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="9" skipped="0" tests="32" time="26.939" timestamp="2026-10-13T11:59:12.354441+09:00" hostname="LAPTOP-P2VP6OQ2"><testcase classname="review_artifacts.task102_incremental.test_review" name="test_real_http_matrix[200]" time="1.239" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_real_http_matrix[429-success]" time="0.761" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_real_http_matrix[5xx-bound]" time="0.767" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_real_http_matrix[timeout]" time="0.883" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_real_http_matrix[400]" time="0.747" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_real_http_matrix[retry-zero]" time="0.768" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_real_http_matrix[connection-drop]" time="0.749" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_structured_modes[json_schema]" time="0.749" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_structured_modes[json_object]" time="0.748" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_cancel_inflight_and_reuse" time="0.767" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_cancel_backoff_reaches_sink" time="0.782" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_queue_no_phantom_and_permit_reuse[queue-cancel]" time="0.816" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_queue_no_phantom_and_permit_reuse[queue-timeout]" time="0.884" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_cancel_sink_failure_boundary[raise]" time="0.766" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_cancel_sink_failure_boundary[block]" time="1.069"><failure message="AssertionError: cancellation stuck in TraceSink: no internal write deadline&#10;assert &lt;Task cancelling name='Task-54' coro=&lt;IntentService.analyze() running at D:\akae\AICoach\backend\app\services\intent_service.py:137&gt; wait_for=&lt;Future pending cb=[Task.task_wakeup()]&gt;&gt; in set()">..\review_artifacts\task102_incremental\test_review.py:334: in test_cancel_sink_failure_boundary
+    asyncio.run(run())
+D:\software\python\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+D:\software\python\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+D:\software\python\Lib\asyncio\base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+..\review_artifacts\task102_incremental\test_review.py:323: in run
+    assert task in done, "cancellation stuck in TraceSink: no internal write deadline"
+E   AssertionError: cancellation stuck in TraceSink: no internal write deadline
+E   assert &lt;Task cancelling name='Task-54' coro=&lt;IntentService.analyze() running at D:\akae\AICoach\backend\app\services\intent_service.py:137&gt; wait_for=&lt;Future pending cb=[Task.task_wakeup()]&gt;&gt; in set()</failure></testcase><testcase classname="review_artifacts.task102_incremental.test_review" name="test_cancel_sink_failure_boundary[repeat_cancel]" time="0.749"><failure message="asyncio.exceptions.CancelledError">app\providers\qwen.py:109: in _invoke_after_acquire
+    completion = await self._client.chat.completions.create(**request)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\openai\resources\chat\completions\completions.py:2585: in create
+    return await self._post(
+.venv\Lib\site-packages\openai\_base_client.py:1794: in post
+    return await self.request(cast_to, opts, stream=stream, stream_cls=stream_cls)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\openai\_base_client.py:1529: in request
+    response = await self._client.send(
+.venv\Lib\site-packages\httpx\_client.py:1629: in send
+    response = await self._send_handling_auth(
+.venv\Lib\site-packages\httpx\_client.py:1657: in _send_handling_auth
+    response = await self._send_handling_redirects(
+.venv\Lib\site-packages\httpx\_client.py:1694: in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\httpx\_client.py:1730: in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\httpx\_transports\default.py:394: in handle_async_request
+    resp = await self._pool.handle_async_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\httpcore\_async\connection_pool.py:256: in handle_async_request
+    raise exc from None
+.venv\Lib\site-packages\httpcore\_async\connection_pool.py:236: in handle_async_request
+    response = await connection.handle_async_request(
+.venv\Lib\site-packages\httpcore\_async\connection.py:103: in handle_async_request
+    return await self._connection.handle_async_request(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\httpcore\_async\http11.py:136: in handle_async_request
+    raise exc
+.venv\Lib\site-packages\httpcore\_async\http11.py:106: in handle_async_request
+    ) = await self._receive_response_headers(**kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\httpcore\_async\http11.py:177: in _receive_response_headers
+    event = await self._receive_event(timeout=timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\httpcore\_async\http11.py:217: in _receive_event
+    data = await self._network_stream.read(
+.venv\Lib\site-packages\httpcore\_backends\anyio.py:35: in read
+    return await self._stream.receive(max_bytes=max_bytes)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\anyio\_backends\_asyncio.py:1407: in receive
+    await self._protocol.read_event.wait()
+D:\software\python\Lib\asyncio\locks.py:213: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+app\services\intent_service.py:122: in analyze
+    response = await self._provider.invoke(prompt)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app\providers\qwen.py:91: in invoke
+    return await self._invoke_after_acquire(prompt)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app\providers\qwen.py:144: in _invoke_after_acquire
+    raise ProviderCancelledError(attempts) from exc
+E   app.providers.types.ProviderCancelledError: provider invocation cancelled
+
+During handling of the above exception, another exception occurred:
+..\review_artifacts\task102_incremental\test_review.py:334: in test_cancel_sink_failure_boundary
+    asyncio.run(run())
+D:\software\python\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+D:\software\python\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+D:\software\python\Lib\asyncio\base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+..\review_artifacts\task102_incremental\test_review.py:320: in run
+    await task
+app\services\intent_service.py:137: in analyze
+    await self._persist_failure(trace)
+app\services\intent_service.py:194: in _persist_failure
+    await self._trace_sink.write(trace)
+..\review_artifacts\task102_incremental\test_review.py:309: in write
+    await asyncio.Event().wait()
+D:\software\python\Lib\asyncio\locks.py:213: in wait
+    await fut
+E   asyncio.exceptions.CancelledError</failure></testcase><testcase classname="review_artifacts.task102_incremental.test_review" name="test_sanitizer_known_negative_inputs[my password is Tr0ub4dor; token is abc123; API key is secret123; Authorization: Bearer test-secret]" time="0.000" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_sanitizer_known_negative_inputs[value1]" time="0.000" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_sanitizer_known_negative_inputs[{&quot;password&quot;: &quot;Tr0ub4dor&quot;, &quot;nested&quot;: [{&quot;token&quot;: &quot;abc123&quot;}, {&quot;api_key&quot;: &quot;secret123&quot;}]}]" time="0.000" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_sanitizer_known_negative_inputs[value3]" time="0.000" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_sanitizer_preserves_identifiers" time="0.000" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_full_diagnostic_redaction[trace_text]" time="0.750"><failure message="AssertionError: fabricated secret survived in diagnostic&#10;assert False&#10; +  where False = all(&lt;generator object assert_clean.&lt;locals&gt;.&lt;genexpr&gt; at 0x0000018330958D40&gt;)">..\review_artifacts\task102_incremental\test_review.py:393: in test_full_diagnostic_redaction
+    asyncio.run(run())
+D:\software\python\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+D:\software\python\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+D:\software\python\Lib\asyncio\base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+..\review_artifacts\task102_incremental\test_review.py:390: in run
+    assert_clean(diagnostic)
+..\review_artifacts\task102_incremental\test_review.py:132: in assert_clean
+    assert all(secret not in encoded for secret in SECRETS), "fabricated secret survived in diagnostic"
+E   AssertionError: fabricated secret survived in diagnostic
+E   assert False
+E    +  where False = all(&lt;generator object assert_clean.&lt;locals&gt;.&lt;genexpr&gt; at 0x0000018330958D40&gt;)</failure></testcase><testcase classname="review_artifacts.task102_incremental.test_review" name="test_full_diagnostic_redaction[parsed_payload]" time="0.769"><failure message="AssertionError: fabricated secret survived in diagnostic&#10;assert False&#10; +  where False = all(&lt;generator object assert_clean.&lt;locals&gt;.&lt;genexpr&gt; at 0x00000183306A12F0&gt;)">..\review_artifacts\task102_incremental\test_review.py:393: in test_full_diagnostic_redaction
+    asyncio.run(run())
+D:\software\python\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+D:\software\python\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+D:\software\python\Lib\asyncio\base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+..\review_artifacts\task102_incremental\test_review.py:390: in run
+    assert_clean(diagnostic)
+..\review_artifacts\task102_incremental\test_review.py:132: in assert_clean
+    assert all(secret not in encoded for secret in SECRETS), "fabricated secret survived in diagnostic"
+E   AssertionError: fabricated secret survived in diagnostic
+E   assert False
+E    +  where False = all(&lt;generator object assert_clean.&lt;locals&gt;.&lt;genexpr&gt; at 0x00000183306A12F0&gt;)</failure></testcase><testcase classname="review_artifacts.task102_incremental.test_review" name="test_full_diagnostic_redaction[provider_error]" time="0.769"><failure message="AssertionError: fabricated secret survived in diagnostic&#10;assert False&#10; +  where False = all(&lt;generator object assert_clean.&lt;locals&gt;.&lt;genexpr&gt; at 0x0000018330959490&gt;)">..\review_artifacts\task102_incremental\test_review.py:393: in test_full_diagnostic_redaction
+    asyncio.run(run())
+D:\software\python\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+D:\software\python\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+D:\software\python\Lib\asyncio\base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+..\review_artifacts\task102_incremental\test_review.py:390: in run
+    assert_clean(diagnostic)
+..\review_artifacts\task102_incremental\test_review.py:132: in assert_clean
+    assert all(secret not in encoded for secret in SECRETS), "fabricated secret survived in diagnostic"
+E   AssertionError: fabricated secret survived in diagnostic
+E   assert False
+E    +  where False = all(&lt;generator object assert_clean.&lt;locals&gt;.&lt;genexpr&gt; at 0x0000018330959490&gt;)</failure></testcase><testcase classname="review_artifacts.task102_incremental.test_review" name="test_full_diagnostic_redaction[business_error]" time="0.769"><failure message="AssertionError: fabricated secret survived in diagnostic&#10;assert False&#10; +  where False = all(&lt;generator object assert_clean.&lt;locals&gt;.&lt;genexpr&gt; at 0x0000018330667E00&gt;)">..\review_artifacts\task102_incremental\test_review.py:393: in test_full_diagnostic_redaction
+    asyncio.run(run())
+D:\software\python\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+D:\software\python\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+D:\software\python\Lib\asyncio\base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+..\review_artifacts\task102_incremental\test_review.py:390: in run
+    assert_clean(diagnostic)
+..\review_artifacts\task102_incremental\test_review.py:132: in assert_clean
+    assert all(secret not in encoded for secret in SECRETS), "fabricated secret survived in diagnostic"
+E   AssertionError: fabricated secret survived in diagnostic
+E   assert False
+E    +  where False = all(&lt;generator object assert_clean.&lt;locals&gt;.&lt;genexpr&gt; at 0x0000018330667E00&gt;)</failure></testcase><testcase classname="review_artifacts.task102_incremental.test_review" name="test_full_diagnostic_redaction[cancel_trace]" time="0.770"><failure message="AssertionError: fabricated secret survived in diagnostic&#10;assert False&#10; +  where False = all(&lt;generator object assert_clean.&lt;locals&gt;.&lt;genexpr&gt; at 0x0000018330936C20&gt;)">..\review_artifacts\task102_incremental\test_review.py:393: in test_full_diagnostic_redaction
+    asyncio.run(run())
+D:\software\python\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+D:\software\python\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+D:\software\python\Lib\asyncio\base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+..\review_artifacts\task102_incremental\test_review.py:390: in run
+    assert_clean(diagnostic)
+..\review_artifacts\task102_incremental\test_review.py:132: in assert_clean
+    assert all(secret not in encoded for secret in SECRETS), "fabricated secret survived in diagnostic"
+E   AssertionError: fabricated secret survived in diagnostic
+E   assert False
+E    +  where False = all(&lt;generator object assert_clean.&lt;locals&gt;.&lt;genexpr&gt; at 0x0000018330936C20&gt;)</failure></testcase><testcase classname="review_artifacts.task102_incremental.test_review" name="test_full_diagnostic_redaction[cancel_params]" time="0.786"><failure message="AssertionError: fabricated secret survived in diagnostic&#10;assert False&#10; +  where False = all(&lt;generator object assert_clean.&lt;locals&gt;.&lt;genexpr&gt; at 0x0000018331444040&gt;)">..\review_artifacts\task102_incremental\test_review.py:393: in test_full_diagnostic_redaction
+    asyncio.run(run())
+D:\software\python\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+D:\software\python\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+D:\software\python\Lib\asyncio\base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+..\review_artifacts\task102_incremental\test_review.py:390: in run
+    assert_clean(diagnostic)
+..\review_artifacts\task102_incremental\test_review.py:132: in assert_clean
+    assert all(secret not in encoded for secret in SECRETS), "fabricated secret survived in diagnostic"
+E   AssertionError: fabricated secret survived in diagnostic
+E   assert False
+E    +  where False = all(&lt;generator object assert_clean.&lt;locals&gt;.&lt;genexpr&gt; at 0x0000018331444040&gt;)</failure></testcase><testcase classname="review_artifacts.task102_incremental.test_review" name="test_diagnostics_have_size_limit" time="0.919"><failure message="AssertionError: entire 2 MiB exception retained&#10;assert 2097196 &lt; 2097152&#10; +  where 2097196 = len(&quot;Error code: 400 - {'error': {'message': 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}}&quot;)&#10; +    where &quot;Error code: 400 - {'error': {'message': 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}}&quot; = ProviderError(&quot;Error code: 400 - {'error': {'message': 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}}&quot;).message&#10; +      where ProviderError(&quot;Error code: 400 - {'error': {'message': 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}}&quot;) = &lt;ExceptionInfo ProviderError(&quot;Error code: 400 - {'error': {'message': 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}}&quot;) tblen=4&gt;.value&#10; +  and   2097152 = len('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')">..\review_artifacts\task102_incremental\test_review.py:409: in test_diagnostics_have_size_limit
+    asyncio.run(run())
+D:\software\python\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+D:\software\python\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+D:\software\python\Lib\asyncio\base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+..\review_artifacts\task102_incremental\test_review.py:406: in run
+    assert len(caught.value.message) &lt; len(huge), "entire 2 MiB exception retained"
+E   AssertionError: entire 2 MiB exception retained
+E   assert 2097196 &lt; 2097152
+E    +  where 2097196 = len("Error code: 400 - {'error': {'message': 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}}")
+E    +    where "Error code: 400 - {'error': {'message': 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}}" = ProviderError("Error code: 400 - {'error': {'message': 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}}").message
+E    +      where ProviderError("Error code: 400 - {'error': {'message': 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}}") = &lt;ExceptionInfo ProviderError("Error code: 400 - {'error': {'message': 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}}") tblen=4&gt;.value
+E    +  and   2097152 = len('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')</failure></testcase><testcase classname="review_artifacts.task102_incremental.test_review" name="test_connect_refusal_is_network_attempt_not_server_receipt" time="4.816" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_default_info_logs_do_not_emit_payload[success]" time="0.767" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_default_info_logs_do_not_emit_payload[error]" time="0.761" /><testcase classname="review_artifacts.task102_incremental.test_review" name="test_default_info_logs_do_not_emit_payload[cancel]" time="0.770" /></testsuite></testsuites>
