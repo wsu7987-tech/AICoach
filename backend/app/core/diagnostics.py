@@ -94,3 +94,41 @@ def diagnostic_payload(value: dict[str, Any]) -> dict[str, Any]:
         else:
             high = middle - 1
     return {"truncated": True, "preview": preview[:low]}
+
+
+def bounded_validation_issues(value: Any) -> list[dict[str, Any]]:
+    """Make the persisted validation diagnostic a bounded UTF-8 representation.
+
+    This deliberately operates on the diagnostic copy only.  In particular it
+    never changes the SlotValue used by business validation or the model request.
+    The issue code is retained even when its nested slot needs truncation.
+    """
+
+    clean = sanitize(value)
+    if not isinstance(clean, list):
+        return []
+    limit = get_settings().trace_raw_max_bytes
+    result: list[dict[str, Any]] = []
+    for raw_issue in clean:
+        if hasattr(raw_issue, "model_dump"):
+            raw_issue = raw_issue.model_dump(mode="json")
+        if not isinstance(raw_issue, Mapping):
+            continue
+        issue = dict(raw_issue)
+        slot = issue.get("slot")
+        if isinstance(slot, Mapping) and isinstance(slot.get("value"), str):
+            # Leave enough room for the issue envelope and other slot fields.
+            issue["slot"] = dict(slot)
+            issue["slot"]["value"] = diagnostic_text(slot["value"], max(256, limit // 2))
+            if issue["slot"]["value"] != slot["value"]:
+                issue["truncated"] = True
+        candidate = [*result, issue]
+        if len(json.dumps(candidate, ensure_ascii=False).encode("utf-8")) <= limit:
+            result.append(issue)
+            continue
+        # Preserve the code even if the full slot envelope cannot fit.
+        minimal = {"code": issue.get("code", "SLOT_SPAN_INVALID"), "truncated": True}
+        if len(json.dumps([*result, minimal], ensure_ascii=False).encode("utf-8")) <= limit:
+            result.append(minimal)
+        break
+    return result

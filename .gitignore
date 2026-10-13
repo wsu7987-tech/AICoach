@@ -13,3 +13,4 @@ __pycache__/
 .DS_Store
 .tmp
 .tmp-task002-mysql
+/.tmp-task103-*/

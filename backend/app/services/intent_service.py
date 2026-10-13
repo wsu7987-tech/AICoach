@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from app.core.diagnostics import diagnostic_text, error_summary, sanitize
+from app.core.diagnostics import bounded_validation_issues, diagnostic_text, error_summary, sanitize
 from app.core.errors import AppError, ErrorCode
 from app.prompting.builder import PromptBuilder
 from app.providers.factory import ModelProviderFactory, configuration_error, verify_provider
@@ -76,13 +76,15 @@ class RuntimeConfigLoader(Protocol):
 
 
 class TraceRecord(BaseModel):
-    """In-memory Trace representation; durable storage is TASK-103 scope."""
+    """Sanitized diagnostic record passed to the durable TraceStore."""
 
     model_config = ConfigDict(extra="forbid")
 
     trace_id: str
     request_id: str
     text: str
+    context: dict[str, Any] = Field(default_factory=dict)
+    source: str = "runtime"
     model_config_id: int | None = None
     release_id: int | None = None
     config_snapshot_hash: str | None = None
@@ -91,6 +93,10 @@ class TraceRecord(BaseModel):
     model_config_snapshot: dict[str, Any] | None = None
     attempts: list[LLMAttempt] = Field(default_factory=list)
     validation_issues: list[OutputValidationIssue] = Field(default_factory=list)
+    final_result: dict[str, Any] | None = None
+    reason_summary: str | None = None
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    prompt: dict[str, Any] | None = None
     cancelled: bool = False
     error_code: ErrorCode | None = None
     error_message: str | None = None
@@ -106,6 +112,8 @@ class TraceRecord(BaseModel):
                 clean[key] = diagnostic_text(clean[key])
         if clean.get("error_message") is not None:
             clean["error_message"] = error_summary(clean["error_message"])
+        if "validation_issues" in clean:
+            clean["validation_issues"] = bounded_validation_issues(clean["validation_issues"])
         return clean
 
 
@@ -178,11 +186,16 @@ class IntentService:
         text: str,
         context: dict[str, Any] | None = None,
         request_id: str | None = None,
+        execution_mode: Literal["runtime", "debug", "replay", "evaluation"] = "runtime",
     ) -> IntentResult:
         request = IntentAnalyzeRequest(request_id=request_id, text=text, context=context or {})
         effective_request_id = request.request_id or str(uuid4())
         trace = TraceRecord(
-            trace_id=str(uuid4()), request_id=effective_request_id, text=request.text
+            trace_id=str(uuid4()),
+            request_id=effective_request_id,
+            text=request.text,
+            context=request.context,
+            source=execution_mode,
         )
         try:
             try:
@@ -205,6 +218,7 @@ class IntentService:
             )
             verify_provider(provider, config.model_config_snapshot)
             prompt = self._prompt_builder.build(config.snapshot, request.text, request.context)
+            trace.prompt = prompt.model_dump(mode="json")
             response = await provider.invoke(prompt)
             trace.attempts = response.attempts
             output = self._parse_output(response.content, response.attempts)
@@ -215,7 +229,10 @@ class IntentService:
                 text=request.text,
             )
             trace.validation_issues = validated.validation_issues
-            await self._persist_success(trace)
+            trace.final_result = validated.result.model_dump(mode="json")
+            trace.reason_summary = output.reason_summary
+            trace.evidence = [item.model_dump(mode="json") for item in output.evidence]
+            await self._persist_success(trace, fail_open=execution_mode == "runtime")
             return validated.result
         except asyncio.CancelledError as exc:
             cancellation = (
@@ -231,13 +248,13 @@ class IntentService:
             trace.attempts = exc.attempts
             trace.error_code = exc.code
             trace.error_message = exc.message
-            await self._persist_failure(trace)
+            await self._persist_failure(trace, fail_open=execution_mode == "runtime")
             raise
         except IntentServiceError as exc:
             trace.attempts = exc.attempts
             trace.error_code = exc.code
             trace.error_message = exc.message
-            await self._persist_failure(trace)
+            await self._persist_failure(trace, fail_open=execution_mode == "runtime")
             raise
         except BusinessOutputValidationError as exc:
             error = IntentServiceError(
@@ -245,7 +262,7 @@ class IntentService:
             )
             trace.error_code = error.code
             trace.error_message = error.message
-            await self._persist_failure(trace)
+            await self._persist_failure(trace, fail_open=execution_mode == "runtime")
             raise error from None
 
     @staticmethod
@@ -303,15 +320,15 @@ class IntentService:
         # There is no await after handling interruption. analyze() re-raises its
         # original ProviderCancelledError, preserving both identity and Attempts.
 
-    async def _persist_success(self, trace: TraceRecord) -> None:
+    async def _persist_success(self, trace: TraceRecord, *, fail_open: bool) -> None:
         try:
             await self._trace_sink.write(TraceRecord.model_validate(trace.model_dump(mode="json")))
         except Exception:
-            # Runtime business success is fail-open when Trace persistence fails.
             logger.warning("TRACE_PERSIST_FAILED trace_id=%s", trace.trace_id)
-            return
+            if not fail_open:
+                raise AppError(ErrorCode.INTERNAL_ERROR, "trace persistence failed", 500) from None
 
-    async def _persist_failure(self, trace: TraceRecord) -> None:
+    async def _persist_failure(self, trace: TraceRecord, *, fail_open: bool) -> None:
         try:
             await self._trace_sink.write(TraceRecord.model_validate(trace.model_dump(mode="json")))
         except asyncio.CancelledError:
@@ -322,6 +339,6 @@ class IntentService:
             await self._persist_cancellation(trace, cancellation)
             raise cancellation from None
         except Exception:
-            # TASK-103 will distinguish Runtime from Debug/Replay/Evaluation modes.
             logger.warning("TRACE_PERSIST_FAILED trace_id=%s", trace.trace_id)
-            return
+            if not fail_open:
+                raise AppError(ErrorCode.INTERNAL_ERROR, "trace persistence failed", 500) from None

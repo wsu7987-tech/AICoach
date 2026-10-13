@@ -38,7 +38,7 @@ class Database:
             try:
                 async with session.begin():
                     yield session
-            except Exception:
+            except BaseException:
                 await session.rollback()
                 raise
 

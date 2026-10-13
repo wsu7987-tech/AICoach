@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from uuid import uuid4
@@ -17,8 +18,13 @@ from app.core.request_context import request_id_context
 from app.core.settings import Settings, get_settings
 from app.db.database import Database
 from app.db.readiness import DatabaseSchemaReadiness
+from app.prompting.builder import PromptBuilder
+from app.providers.factory import ModelProviderFactory
 from app.schemas.errors import ErrorEnvelope
 from app.services.config_service import ConfigError
+from app.services.intent_service import IntentService
+from app.services.runtime_config import DatabaseRuntimeConfigLoader
+from app.services.trace_store import DatabaseTraceStore
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +57,27 @@ def create_app(
     app_settings = settings or get_settings()
     configure_logging(app_settings.log_level)
     database = Database(app_settings) if app_settings.database_url else None
+    provider_factory: ModelProviderFactory | None = None
+    intent_service: IntentService | None = None
+    if database is not None:
+
+        def credential_resolver(reference: str) -> str:
+            # The DB stores an environment/secret reference, never the secret.
+            if reference == "QWEN_API_KEY":
+                return app_settings.qwen_api_key or ""
+            return os.getenv(reference, "")
+
+        provider_factory = ModelProviderFactory(
+            credential_resolver, queue_wait_timeout=app_settings.provider_queue_wait_timeout
+        )
+        intent_service = IntentService(
+            DatabaseRuntimeConfigLoader(
+                database.session_factory, ttl_seconds=app_settings.runtime_config_cache_ttl_seconds
+            ),
+            provider_factory,
+            PromptBuilder(),
+            DatabaseTraceStore(database.session_factory),
+        )
     checker = readiness_checker or ReadinessChecker()
     if readiness_checker is None:
         if database is None:
@@ -67,6 +94,8 @@ def create_app(
         try:
             yield
         finally:
+            if provider_factory is not None:
+                await provider_factory.close()
             if database is not None:
                 await database.dispose()
 
@@ -79,6 +108,7 @@ def create_app(
     app.state.settings = app_settings
     app.state.database = database
     app.state.readiness_checker = checker
+    app.state.intent_service = intent_service
 
     @app.middleware("http")
     async def request_context_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]

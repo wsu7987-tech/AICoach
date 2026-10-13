@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     max_eval_cases: int = 500
     provider_queue_wait_timeout: float = 2.0
     trace_raw_max_bytes: int = Field(default=65_536, ge=256)
+    runtime_config_cache_ttl_seconds: float = Field(default=2.0, gt=0, le=60)
+    trace_retention_days: int = Field(default=30, ge=1)
+    eval_trace_retention_days: int = Field(default=90, ge=1)
 
 
 @lru_cache

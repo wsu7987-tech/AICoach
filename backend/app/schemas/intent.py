@@ -370,6 +370,8 @@ class OutputValidationIssue(ContractModel):
         "CLARIFICATION_FORCED_OFF",
     ]
     slot: SlotValue | None = None
+    # Trace-only marker.  It is never part of the public IntentResult contract.
+    truncated: bool = False
 
 
 class ValidatedIntentOutput(ContractModel):
