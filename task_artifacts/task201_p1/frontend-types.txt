@@ -1,0 +1,3 @@
+
+> ai-coach-intent-router-frontend@1.2.4 lint
+> vue-tsc --noEmit

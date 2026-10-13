@@ -1,0 +1,3 @@
+TASK-102 assertions unchanged; valid credential/hash fixtures; cancel_params at Provider boundary.
+................................                                         [100%]
+32 passed in 27.26s

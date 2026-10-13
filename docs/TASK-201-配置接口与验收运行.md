@@ -17,7 +17,7 @@
 | GET `/model-configs/{id}` | 读取 ModelConfigSnapshot |
 | POST `/model-configs/{id}/disable` | 拒绝 Active Release 正在使用的版本 |
 | GET `/config/publish-summary?default_model_config_id=...` | 返回 Draft Hash、Active ID、Model ID/Hash、预期 Fingerprint、section before/after |
-| POST `/releases` | 必填 `{default_model_config_id, note}`；可带 `expected_draft_hash/expected_active_release_id`，UI 总是提交这两个审阅 token |
+| POST `/releases` | 必填 `{default_model_config_id, note, expected_draft_hash, expected_active_release_id}`；首次 Active token 必须显式为 null |
 | GET `/releases` | 返回 `active_release_id/items`；按 ID 倒序，支持 `offset/limit`，最大 200 |
 | GET `/releases/{id}` | 历史 Business Snapshot、有效 Model Snapshot 及三个 Hash；读取时校验一致性 |
 | POST `/releases/{id}/create-draft` | `{expected_draft_hash}`；历史 Snapshot 复制到 Draft，不切换 Active |
@@ -27,7 +27,7 @@ Model create 必填 name/version/provider/model/base_url/timeout_seconds/max_ret
 
 Model 参数从创建开始即 append-only，只支持创建新版本；name+version 重复为冲突。Release version 为 `release-{uuid}`，身份使用自增 ID 与唯一 version；Hash/Fingerprint 不是身份、没有 UNIQUE。应用 ORM 额外拒绝历史 Release update/delete 和 Model 参数 update/delete；直接数据库维护权限仍需由部署限制，不将 ORM 事件声称为数据库防篡改机制。
 
-部署先执行 Alembic 到 `0003_model_timeout_double`：原 FLOAT 会舍入高精度小数超时并破坏 Hash 一致性，因此改为 DOUBLE。迁移通过旧列的文本读回值复制，避免直接二进制扩展改变已存在版本的逻辑值；临时列与最终原子列交换支持中断后重跑。存在无法无损收窄的值时拒绝 downgrade，不修改历史 Hash。
+部署必须停写并完成全量存量 Hash 审计（包括已在 head 的库），详见 [0003 审计与恢复 Runbook](TASK-201-0003-审计与恢复Runbook.md)。之后执行 Alembic 到 `0003_model_timeout_double`：原 FLOAT 会舍入高精度小数超时并破坏 Hash 一致性，因此改为 DOUBLE。迁移通过旧列的文本读回值复制，避免直接二进制扩展改变已存在版本的逻辑值；临时列与最终原子列交换支持中断后重跑。存在无法无损收窄的值时拒绝 downgrade，不修改历史 Hash。
 
 ## Admin 错误
 
@@ -47,6 +47,12 @@ Admin mutation 使用独立 AsyncSession。首先 MySQL upsert + FOR UPDATE 锁 
 `effective_model_snapshot(ModelConfig)` 返回 TASK-102 已有 `ModelConfigSnapshot`；`release_configuration(session, id)` 返回校验后的 Snapshot 与完整 Release provenance。历史 disabled Model 仍可读取，新的 Publish 不能选择；历史消费方应使用自己冻结的 Snapshot。TASK-103 在此边界上实现 TTL + Active ID 校验和 DB Trace 接入，本 Task 未实现 Runtime loader/API/TraceStore。
 
 ## 本地验证
+
+Publish 的两个审阅 token 都必填：`expected_draft_hash` 为 64 位小写 SHA256，`expected_active_release_id` 必须显式出现（首次为 null）。Summary 后 Draft 或 Active 变化均返回 409，不产生新 Release；重新获取并审阅摘要后才可重试。
+
+`RuntimeConfiguration.from_release()` 将 `release_configuration()` 结果转换为带完整 provenance 的类型，IntentService 每次重解析独立副本并验证 Hash/Fingerprint。生产接线使用每个进程/事件循环共享的 `ModelProviderFactory`，由 Secret 解析器把 credential_ref 解析成 Key；缓存按 `(id, verified model_config_hash)`，默认最多 128 个客户端，满时明确 SERVICE_BUSY，不回退旧 Provider。应用关闭先排空请求再 await factory.close()；容量需按已加载版本数配置，凭据轮换需重建客户端/滚动重启。历史 disabled Snapshot 可继续调用，新的选择仍由 Admin enabled 校验保护。
+
+固定 Provider 兼容注入也必须与有效 Snapshot 的 id/hash 一致，否则请求前 CONFIG_NOT_READY 503、零 Attempt。Trace 保存请求加载时的 release_id/config_snapshot_hash/model_config_hash/release_fingerprint/model_config_id/model_config_snapshot；切换 Active 不回写在途或历史请求。此处只有类型/Provider 装配边界，没有 TASK-103 TTL DB Loader、Runtime API 或 DB TraceStore。
 
 后端统一在 backend 执行 `uv run --locked --extra dev ...`。需要 MySQL 8，测试会清理被明确指定的隔离测试库：
 

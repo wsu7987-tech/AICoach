@@ -290,19 +290,23 @@ async def publish_summary(session: AsyncSession, model_id: int) -> dict[str, Any
 
 
 async def publish(session: AsyncSession, request: PublishInput) -> dict[str, Any]:
+    request = PublishInput.model_validate(request.model_dump(mode="json"))
     state = await lock_state(session)
-    draft = await session.scalar(select(ConfigDraft).where(ConfigDraft.id == 1).with_for_update())
+    draft = await session.scalar(
+        select(ConfigDraft)
+        .where(ConfigDraft.id == 1)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if draft is None:
         raise ConfigError("DRAFT_NOT_FOUND", "请先创建 Draft", 404)
-    if request.expected_draft_hash is not None:
-        check_draft_version(draft, request.expected_draft_hash)
-    if (
-        "expected_active_release_id" in request.model_fields_set
-        and request.expected_active_release_id != state.active_release_id
-    ):
+    check_draft_version(draft, request.expected_draft_hash)
+    if request.expected_active_release_id != state.active_release_id:
         raise ConfigError("RELEASE_CONFLICT", "Active Release 已变化，请重新查看发布摘要")
     payload, digest = validate_business(draft.draft_json)
-    model = await session.get(ModelConfig, request.default_model_config_id, with_for_update=True)
+    model = await session.get(
+        ModelConfig, request.default_model_config_id, with_for_update=True, populate_existing=True
+    )
     if model is None:
         raise ConfigError("MODEL_NOT_FOUND", "Model Config 不存在", 404)
     if not model.enabled:

@@ -76,7 +76,7 @@ HTTP 与 error_code 映射（Contract，不再“按网关约定”）：
 - `PUT /api/admin/config/draft`
 - `POST /api/admin/config/validate`
 - `POST /api/admin/config/prompt-preview`
-- `POST /api/admin/releases`（body 必填 `default_model_config_id` 与 `note`；该 Model Config 必须 enabled；服务端基于当前 Draft 生成 Snapshot）
+- `POST /api/admin/releases`（body 必填 `default_model_config_id`、`note`、`expected_draft_hash` 与必须显式出现但可为 null 的 `expected_active_release_id`；该 Model Config 必须 enabled；审阅后 Draft/Active 变化则 409；服务端基于当前 Draft 生成 Snapshot）
 - `GET /api/admin/releases`
 - `GET /api/admin/releases/{id}`
 - `POST /api/admin/releases/{id}/create-draft`

@@ -23,6 +23,7 @@ from app.core.errors import ErrorCode
 from app.prompting.builder import PromptBuilder
 from app.providers.qwen import ProviderError, QwenProvider
 from app.providers.types import ProviderCancelledError
+from app.schemas.config import model_hash
 from app.schemas.intent import ModelConfigSnapshot, RuntimeConfigSnapshot
 from app.services.intent_service import (
     InMemoryRuntimeConfigLoader,
@@ -109,11 +110,13 @@ def _model_config(base_url: str, **overrides: Any) -> ModelConfigSnapshot:
         "max_retries": 1,
         "max_concurrency": 1,
         "structured_output_mode": "json_schema",
-        "credential_ref": "env/DASHSCOPE_API_KEY",
+        "credential_ref": "DASHSCOPE_API_KEY",
         "model_config_hash": "a" * 64,
     }
     payload.update(overrides)
-    return ModelConfigSnapshot.model_validate(payload)
+    config = ModelConfigSnapshot.model_validate(payload)
+    config.model_config_hash = model_hash(config)
+    return config
 
 
 def _snapshot() -> RuntimeConfigSnapshot:
@@ -255,9 +258,7 @@ def test_in_flight_cancellation_records_attempt_reaches_trace_and_releases_permi
     provider = _provider(scenario_server, max_retries=0, timeout_seconds=1)
     sink = InMemoryTraceSink()
     service = IntentService(
-        InMemoryRuntimeConfigLoader(
-            _snapshot(), _model_config(provider.base_url, timeout_seconds=1)
-        ),
+        InMemoryRuntimeConfigLoader(_snapshot(), provider.model_config),
         provider,
         PromptBuilder(),
         sink,
@@ -399,7 +400,7 @@ def test_intent_service_validates_output_and_preserves_trace_diagnostics(
     provider = _provider(scenario_server)
     sink = InMemoryTraceSink()
     service = IntentService(
-        InMemoryRuntimeConfigLoader(_snapshot(), _model_config(provider.base_url)),
+        InMemoryRuntimeConfigLoader(_snapshot(), provider.model_config),
         provider,
         PromptBuilder(),
         sink,
@@ -455,7 +456,7 @@ def test_intent_service_preserves_task_101_contracts(
     provider = _provider(scenario_server, max_retries=0)
     sink = InMemoryTraceSink()
     service = IntentService(
-        InMemoryRuntimeConfigLoader(_snapshot(), _model_config(provider.base_url)),
+        InMemoryRuntimeConfigLoader(_snapshot(), provider.model_config),
         provider,
         PromptBuilder(),
         sink,
@@ -474,7 +475,7 @@ def test_provider_failure_is_not_mapped_to_unknown(scenario_server: _ScenarioSer
     scenario_server.responses = [{"status": 429, "payload": {"error": {"message": "limited"}}}]
     provider = _provider(scenario_server, max_retries=0)
     service = IntentService(
-        InMemoryRuntimeConfigLoader(_snapshot(), _model_config(provider.base_url, max_retries=0)),
+        InMemoryRuntimeConfigLoader(_snapshot(), provider.model_config),
         provider,
         PromptBuilder(),
         InMemoryTraceSink(),
@@ -502,7 +503,7 @@ def test_intent_service_separates_parse_and_schema_errors(
     scenario_server.responses = [{"status": 200, "payload": _completion(content)}]
     provider = _provider(scenario_server, max_retries=0)
     service = IntentService(
-        InMemoryRuntimeConfigLoader(_snapshot(), _model_config(provider.base_url)),
+        InMemoryRuntimeConfigLoader(_snapshot(), provider.model_config),
         provider,
         PromptBuilder(),
         InMemoryTraceSink(),

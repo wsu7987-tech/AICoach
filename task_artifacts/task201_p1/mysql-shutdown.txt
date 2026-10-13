@@ -1,0 +1,1 @@
+Temporary MySQL 8.0.32 on 127.0.0.1:13336: normal shutdown; no listener.

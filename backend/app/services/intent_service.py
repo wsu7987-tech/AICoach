@@ -13,8 +13,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from app.core.diagnostics import diagnostic_text, error_summary, sanitize
 from app.core.errors import AppError, ErrorCode
 from app.prompting.builder import PromptBuilder
+from app.providers.factory import ModelProviderFactory, configuration_error, verify_provider
 from app.providers.qwen import ProviderError
 from app.providers.types import LLMAttempt, LLMProvider, ProviderCancelledError, diagnostic_attempts
+from app.schemas.config import business_snapshot, release_fingerprint, verified_model_snapshot
 from app.schemas.intent import (
     BusinessOutputValidationError,
     IntentAnalyzeRequest,
@@ -37,6 +39,36 @@ class RuntimeConfiguration(BaseModel):
 
     snapshot: RuntimeConfigSnapshot
     model_config_snapshot: ModelConfigSnapshot
+    release_id: int = Field(gt=0)
+    config_snapshot_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    model_config_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    release_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @model_validator(mode="after")
+    def verify_provenance(self) -> RuntimeConfiguration:
+        payload, digest = business_snapshot(self.snapshot)
+        model = verified_model_snapshot(self.model_config_snapshot)
+        if (
+            digest != self.config_snapshot_hash
+            or model.model_config_hash != self.model_config_hash
+            or release_fingerprint(digest, model.id, model.model_config_hash)
+            != self.release_fingerprint
+        ):
+            raise ValueError("Release provenance mismatch")
+        self.snapshot = RuntimeConfigSnapshot.model_validate(payload)
+        self.model_config_snapshot = model
+        return self
+
+    @classmethod
+    def from_release(cls, release: dict[str, Any]) -> RuntimeConfiguration:
+        return cls(
+            snapshot=release["snapshot_json"],
+            model_config_snapshot=release["model_config_snapshot"],
+            release_id=release["id"],
+            config_snapshot_hash=release["config_snapshot_hash"],
+            model_config_hash=release["model_config_hash"],
+            release_fingerprint=release["release_fingerprint"],
+        )
 
 
 class RuntimeConfigLoader(Protocol):
@@ -52,6 +84,11 @@ class TraceRecord(BaseModel):
     request_id: str
     text: str
     model_config_id: int | None = None
+    release_id: int | None = None
+    config_snapshot_hash: str | None = None
+    model_config_hash: str | None = None
+    release_fingerprint: str | None = None
+    model_config_snapshot: dict[str, Any] | None = None
     attempts: list[LLMAttempt] = Field(default_factory=list)
     validation_issues: list[OutputValidationIssue] = Field(default_factory=list)
     cancelled: bool = False
@@ -93,12 +130,19 @@ class IntentServiceError(AppError):
 
 
 class InMemoryRuntimeConfigLoader:
-    """Test-only loader. TASK-201 will provide the active-release implementation."""
+    """Test-only loader with synthetic release identity; no DB/TTL loader here."""
 
     def __init__(self, snapshot: RuntimeConfigSnapshot, model_config: ModelConfigSnapshot) -> None:
+        _, digest = business_snapshot(snapshot)
         self._configuration = RuntimeConfiguration(
             snapshot=snapshot,
             model_config_snapshot=model_config,
+            release_id=1,
+            config_snapshot_hash=digest,
+            model_config_hash=model_config.model_config_hash,
+            release_fingerprint=release_fingerprint(
+                digest, model_config.id, model_config.model_config_hash
+            ),
         )
 
     async def load(self) -> RuntimeConfiguration:
@@ -119,7 +163,7 @@ class IntentService:
     def __init__(
         self,
         config_loader: RuntimeConfigLoader,
-        provider: LLMProvider,
+        provider: LLMProvider | ModelProviderFactory,
         prompt_builder: PromptBuilder,
         trace_sink: TraceSink,
     ) -> None:
@@ -141,10 +185,27 @@ class IntentService:
             trace_id=str(uuid4()), request_id=effective_request_id, text=request.text
         )
         try:
-            config = await self._config_loader.load()
+            try:
+                loaded = await self._config_loader.load()
+                # A loader may return a mutated Pydantic instance. Never trust it
+                # or retain references that another request can change.
+                config = RuntimeConfiguration.model_validate(loaded.model_dump(mode="json"))
+            except ValueError:
+                raise configuration_error() from None
             trace.model_config_id = config.model_config_snapshot.id
+            trace.release_id = config.release_id
+            trace.config_snapshot_hash = config.config_snapshot_hash
+            trace.model_config_hash = config.model_config_hash
+            trace.release_fingerprint = config.release_fingerprint
+            trace.model_config_snapshot = config.model_config_snapshot.model_dump(mode="json")
+            provider = (
+                self._provider.resolve(config.model_config_snapshot)
+                if isinstance(self._provider, ModelProviderFactory)
+                else self._provider
+            )
+            verify_provider(provider, config.model_config_snapshot)
             prompt = self._prompt_builder.build(config.snapshot, request.text, request.context)
-            response = await self._provider.invoke(prompt)
+            response = await provider.invoke(prompt)
             trace.attempts = response.attempts
             output = self._parse_output(response.content, response.attempts)
             validated = validate_llm_output(

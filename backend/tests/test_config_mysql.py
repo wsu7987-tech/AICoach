@@ -9,7 +9,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from sqlalchemy import event, func, select, text
+from sqlalchemy import event, func, inspect, select, text
 from sqlalchemy.engine import make_url
 
 from app.core.settings import Settings
@@ -18,6 +18,7 @@ from app.db.database import Database
 from app.db.models import ConfigDraft, ConfigRelease, ModelConfig, RuntimeState
 from app.main import create_app
 from app.schemas.config import ModelConfigCreate, PublishInput
+from app.schemas.intent import sha256_canonical
 from app.services import config_service as service
 from app.services.intent_service import RuntimeConfiguration
 from tests.test_config_contract import document, model_input
@@ -33,6 +34,21 @@ def mysql_url():
     url = make_url(value)
     assert url.drivername == "mysql+asyncmy"
     assert url.database and url.database.startswith("ai_coach_task201_test_")
+
+    async def clear():
+        db = Database(Settings(_env_file=None, database_url=value))
+        try:
+            async with db.transaction() as session:
+                tables = await session.run_sync(
+                    lambda sync: set(inspect(sync.connection()).get_table_names())
+                )
+                for table in reversed(Base.metadata.sorted_tables):
+                    if table.name in tables:
+                        await session.execute(table.delete())
+        finally:
+            await db.dispose()
+
+    asyncio.run(clear())
     # Dedicated prefix is mandatory: this fixture resets only the explicit test database.
     for args in (("upgrade", "head"),):
         result = subprocess.run(
@@ -44,17 +60,17 @@ def mysql_url():
         )
         assert result.returncode == 0, "isolated test migration failed"
 
-    async def clear():
-        db = Database(Settings(_env_file=None, database_url=value))
-        try:
-            async with db.transaction() as session:
-                for table in reversed(Base.metadata.sorted_tables):
-                    await session.execute(table.delete())
-        finally:
-            await db.dispose()
-
-    asyncio.run(clear())
     return value
+
+
+async def reviewed_request(session, model_id, note="reviewed"):
+    summary = await service.publish_summary(session, model_id)
+    return PublishInput(
+        default_model_config_id=model_id,
+        note=note,
+        expected_draft_hash=summary["draft_hash"],
+        expected_active_release_id=summary["active_release_id"],
+    )
 
 
 def test_mysql_publish_atomicity_c7_c9_and_rollback(mysql_url):
@@ -66,11 +82,10 @@ def test_mysql_publish_atomicity_c7_c9_and_rollback(mysql_url):
             async with db.transaction() as s:
                 draft = await service.save_draft(s, document(), None)
                 model = await service.create_model(s, ModelConfigCreate(**model_input()))
-            request = PublishInput(default_model_config_id=model.id, note="first")
             async with db.transaction() as s:
-                first = await service.publish(s, request)
+                first = await service.publish(s, await reviewed_request(s, model.id))
             async with db.transaction() as s:
-                second = await service.publish(s, request)
+                second = await service.publish(s, await reviewed_request(s, model.id))
             assert first["id"] != second["id"]
             for key in ("config_snapshot_hash", "model_config_hash", "release_fingerprint"):
                 assert first[key] == second[key]
@@ -101,7 +116,7 @@ def test_mysql_publish_atomicity_c7_c9_and_rollback(mysql_url):
                 preview = await service.preview_prompt(s, "新表达", {})
                 assert "new_intent" in preview.final_prompt
             async with db.transaction() as s:
-                third = await service.publish(s, request)
+                third = await service.publish(s, await reviewed_request(s, model.id))
                 assert third["config_snapshot_hash"] != first["config_snapshot_hash"]
 
             # Failure after the INSERT and pointer UPDATE really hit MySQL must roll both back.
@@ -113,7 +128,7 @@ def test_mysql_publish_atomicity_c7_c9_and_rollback(mysql_url):
             try:
                 with pytest.raises(RuntimeError, match="injected"):
                     async with db.transaction() as s:
-                        await service.publish(s, request)
+                        await service.publish(s, await reviewed_request(s, model.id))
             finally:
                 event.remove(db.engine.sync_engine, "after_cursor_execute", fail_on_pointer)
             async with db.transaction() as s:
@@ -123,7 +138,7 @@ def test_mysql_publish_atomicity_c7_c9_and_rollback(mysql_url):
                 assert restored["draft_json"] == first["snapshot_json"]
                 assert (await s.get(RuntimeState, 1)).active_release_id == third["id"]
             async with db.transaction() as s:
-                rollback = await service.publish(s, request)
+                rollback = await service.publish(s, await reviewed_request(s, model.id))
                 assert rollback["release_fingerprint"] == first["release_fingerprint"]
                 assert rollback["id"] not in {first["id"], second["id"], third["id"]}
 
@@ -135,7 +150,15 @@ def test_mysql_publish_atomicity_c7_c9_and_rollback(mysql_url):
                 row.draft_json = corrupted
             with pytest.raises(service.ConfigError, match="校验"):
                 async with db.transaction() as s:
-                    await service.publish(s, request)
+                    await service.publish(
+                        s,
+                        PublishInput(
+                            default_model_config_id=model.id,
+                            note="corrupt",
+                            expected_draft_hash=sha256_canonical(corrupted),
+                            expected_active_release_id=rollback["id"],
+                        ),
+                    )
             async with db.transaction() as s:
                 assert (await s.get(RuntimeState, 1)).active_release_id == rollback["id"]
                 assert await s.scalar(select(func.count(ConfigRelease.id))) == 4
@@ -157,8 +180,9 @@ def test_mysql_concurrent_first_publish_and_disable(mysql_url):
 
             async def publish_one():
                 async with db.transaction() as s:
+                    await service.lock_state(s)
                     return await service.publish(
-                        s, PublishInput(default_model_config_id=model.id, note="concurrent")
+                        s, await reviewed_request(s, model.id, "concurrent")
                     )
 
             releases = await asyncio.gather(*(publish_one() for _ in range(8)))
@@ -186,9 +210,7 @@ def test_mysql_concurrent_first_publish_and_disable(mysql_url):
             async def publish_other():
                 try:
                     async with db.transaction() as s:
-                        await service.publish(
-                            s, PublishInput(default_model_config_id=other.id, note="race")
-                        )
+                        await service.publish(s, await reviewed_request(s, other.id, "race"))
                     return "published"
                 except service.ConfigError:
                     return "disabled"
@@ -211,9 +233,7 @@ def test_mysql_immutable_records(mysql_url):
             async with db.transaction() as s:
                 await service.save_draft(s, document(), None)
                 model = await service.create_model(s, ModelConfigCreate(**model_input()))
-                first = await service.publish(
-                    s, PublishInput(default_model_config_id=model.id, note="freeze")
-                )
+                first = await service.publish(s, await reviewed_request(s, model.id, "freeze"))
             with pytest.raises(ValueError, match="immutable"):
                 async with db.transaction() as s:
                     row = await s.get(ModelConfig, model.id)
@@ -224,16 +244,12 @@ def test_mysql_immutable_records(mysql_url):
                     row.snapshot_json = {}
             async with db.transaction() as s:
                 other = await service.create_model(s, ModelConfigCreate(**model_input(version="2")))
-                await service.publish(
-                    s, PublishInput(default_model_config_id=other.id, note="replace")
-                )
+                await service.publish(s, await reviewed_request(s, other.id, "replace"))
+                disabled_request = await reviewed_request(s, model.id, "invalid")
                 disabled = await service.disable_model(s, model.id)
                 assert not disabled.enabled
                 historical = await service.release_configuration(s, first["id"])
-                inputs = RuntimeConfiguration(
-                    snapshot=historical["snapshot_json"],
-                    model_config_snapshot=historical["model_config_snapshot"],
-                )
+                inputs = RuntimeConfiguration.from_release(historical)
                 assert inputs.model_config_snapshot.id == model.id
                 assert not inputs.model_config_snapshot.enabled
                 assert (
@@ -242,9 +258,7 @@ def test_mysql_immutable_records(mysql_url):
                 )
             with pytest.raises(service.ConfigError, match="禁用"):
                 async with db.transaction() as s:
-                    await service.publish(
-                        s, PublishInput(default_model_config_id=model.id, note="invalid")
-                    )
+                    await service.publish(s, disabled_request)
         finally:
             await db.dispose()
 
@@ -301,6 +315,7 @@ def test_mysql_corrupt_model_hash_cannot_activate_release(mysql_url):
             async with db.transaction() as s:
                 await service.save_draft(s, document(), None)
                 model = await service.create_model(s, ModelConfigCreate(**model_input()))
+                request = await reviewed_request(s, model.id, "corrupt")
             # Deliberately bypass application guards to simulate DB corruption.
             async with db.transaction() as s:
                 await s.execute(
@@ -309,9 +324,7 @@ def test_mysql_corrupt_model_hash_cannot_activate_release(mysql_url):
                 )
             with pytest.raises(service.ConfigError, match="Hash"):
                 async with db.transaction() as s:
-                    await service.publish(
-                        s, PublishInput(default_model_config_id=model.id, note="corrupt")
-                    )
+                    await service.publish(s, request)
             async with db.transaction() as s:
                 assert await s.scalar(select(func.count(ConfigRelease.id))) == 0
                 assert (await s.get(RuntimeState, 1)).active_release_id is None
@@ -460,7 +473,14 @@ def test_mysql_admin_api_complete_workflow(mysql_url):
                 )
                 assert restored["draft_json"] == detail["snapshot_json"]
                 rollback = await post(
-                    "/releases", {"default_model_config_id": model["id"], "note": "rollback"}, 201
+                    "/releases",
+                    {
+                        "default_model_config_id": model["id"],
+                        "note": "rollback",
+                        "expected_draft_hash": restored["draft_hash"],
+                        "expected_active_release_id": release["id"],
+                    },
+                    201,
                 )
                 assert rollback["release_fingerprint"] == release["release_fingerprint"]
                 assert (

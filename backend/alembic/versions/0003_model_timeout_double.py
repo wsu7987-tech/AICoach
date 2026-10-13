@@ -7,6 +7,7 @@ Revises: 0002_release_fp_index
 import sqlalchemy as sa
 
 from alembic import context, op
+from app.db.config_audit import audit_configuration
 
 revision = "0003_model_timeout_double"
 down_revision = "0002_release_fp_index"
@@ -15,18 +16,20 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if context.is_offline_mode():
+        raise RuntimeError(
+            "0003 requires an online CONFIG_AUDIT before DDL; offline upgrade refused"
+        )
+    audit_configuration(op.get_bind())
     # FLOAT's text-protocol representation is what existing Python consumers
     # hashed. Direct FLOAT -> DOUBLE widens the binary approximation (30.1 can
     # become 30.100000381469727), so copy the old text representation first.
     # MySQL 8's final column swap is atomic DDL. Re-entry after an interrupted
     # migration is safe before or after that swap.
-    if not context.is_offline_mode():
-        columns = {c["name"]: c for c in sa.inspect(op.get_bind()).get_columns("model_config")}
-        if isinstance(columns["timeout_seconds"]["type"], sa.Double):
-            return
-        if "timeout_seconds_upgrade" not in columns:
-            op.add_column("model_config", sa.Column("timeout_seconds_upgrade", sa.Double()))
-    else:
+    columns = {c["name"]: c for c in sa.inspect(op.get_bind()).get_columns("model_config")}
+    if isinstance(columns["timeout_seconds"]["type"], sa.Double):
+        return
+    if "timeout_seconds_upgrade" not in columns:
         op.add_column("model_config", sa.Column("timeout_seconds_upgrade", sa.Double()))
     op.execute("UPDATE model_config SET timeout_seconds_upgrade = CAST(timeout_seconds AS CHAR)")
     op.execute(

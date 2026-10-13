@@ -35,6 +35,8 @@ from app.db.models import (
 )
 from app.db.readiness import DatabaseSchemaReadiness
 from app.main import create_app
+from app.schemas.config import ModelConfigCreate, business_snapshot, model_hash, release_fingerprint
+from tests.test_config_contract import document, model_input
 
 TEST_DATABASE_URL = os.getenv("MYSQL_TEST_DATABASE_URL")
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -360,43 +362,37 @@ def test_mysql_release_fingerprint_revision_preserves_existing_releases() -> Non
     _alembic("downgrade", "base")
     _alembic("upgrade", "0001_initial_schema")
 
-    async def seed_0001_release() -> int:
+    async def seed_0001_release() -> tuple[int, str]:
         database = _database()
         try:
             async with database.transaction() as session:
+                config = ModelConfigCreate(**model_input(timeout_seconds=1.0))
                 model_config = ModelConfig(
-                    name="test-model",
-                    version="v1",
-                    provider="test",
-                    model="test-model",
-                    base_url="https://example.invalid/v1",
-                    params_json={},
-                    timeout_seconds=1.0,
-                    max_retries=0,
-                    max_concurrency=1,
-                    structured_output_mode="json_schema",
-                    credential_ref="TEST_CREDENTIAL_REF",
-                    model_config_hash="a" * 64,
+                    **config.model_dump(mode="json"), model_config_hash=model_hash(config)
                 )
                 session.add(model_config)
                 await session.flush()
                 release = ConfigRelease(
                     version="release-v1",
-                    snapshot_json={"schema_version": 1},
-                    config_snapshot_hash="b" * 64,
+                    snapshot_json=business_snapshot(document())[0],
+                    config_snapshot_hash=business_snapshot(document())[1],
                     default_model_config_id=model_config.id,
                     model_config_hash=model_config.model_config_hash,
-                    release_fingerprint="c" * 64,
+                    release_fingerprint=release_fingerprint(
+                        business_snapshot(document())[1],
+                        model_config.id,
+                        model_config.model_config_hash,
+                    ),
                     note="pre-0002 release",
                     created_by="test",
                 )
                 session.add(release)
                 await session.flush()
-                return release.id
+                return release.id, release.release_fingerprint
         finally:
             await database.dispose()
 
-    existing_release_id = asyncio.run(seed_0001_release())
+    existing_release_id, original_fingerprint = asyncio.run(seed_0001_release())
     assert asyncio.run(_simulate_interrupted_release_fingerprint_upgrade()) == "0001_initial_schema"
     _alembic("upgrade", "head")
     assert asyncio.run(_alembic_version()) == "0003_model_timeout_double"
@@ -408,7 +404,7 @@ def test_mysql_release_fingerprint_revision_preserves_existing_releases() -> Non
                 existing = await session.get(ConfigRelease, existing_release_id)
                 assert existing is not None
                 assert existing.version == "release-v1"
-                assert existing.release_fingerprint == "c" * 64
+                assert existing.release_fingerprint == original_fingerprint
 
                 session.add(
                     ConfigRelease(

@@ -9,6 +9,7 @@ import app.db.models  # noqa: F401 -- registers every table on Base.metadata
 from alembic import context
 from app.core.settings import get_settings
 from app.db.base import Base
+from app.db.config_audit import audit_existing_configuration
 
 config = context.config
 database_url = get_settings().database_url
@@ -36,6 +37,11 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
+    # Also runs when already at head: deploying the fixed code must not silently
+    # accept a database previously marked 0003 with unreconstructable hashes.
+    audit_existing_configuration(connection)
+    # Finish the read-only autobegin before Alembic owns its migration transaction.
+    connection.commit()
     context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
     with context.begin_transaction():
         context.run_migrations()

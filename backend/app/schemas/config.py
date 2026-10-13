@@ -37,9 +37,9 @@ class DraftPreview(AdminInput):
 class PublishInput(AdminInput):
     default_model_config_id: int = Field(gt=0)
     note: str = Field(min_length=1, max_length=4000)
-    expected_draft_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
-    # UI sends the previewed base to reject stale publish confirmations.
-    expected_active_release_id: int | None = Field(default=None, gt=0)
+    expected_draft_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    # Required even for the first release (explicit null).
+    expected_active_release_id: int | None = Field(gt=0)
 
 
 class RestoreInput(AdminInput):
@@ -191,6 +191,25 @@ MODEL_RUNTIME_FIELDS = (
 def model_hash(config: ModelConfigCreate | ModelConfigSnapshot) -> str:
     payload = config.model_dump(mode="json")
     return sha256_canonical({key: payload[key] for key in MODEL_RUNTIME_FIELDS})
+
+
+def verified_model_snapshot(value: ModelConfigSnapshot) -> ModelConfigSnapshot:
+    """Reparse mutable instances and verify the canonical runtime identity."""
+    snapshot = ModelConfigSnapshot.model_validate(value.model_dump(mode="json"))
+    payload = snapshot.model_dump(mode="json")
+    config = ModelConfigCreate(
+        name=snapshot.name,
+        version=snapshot.version,
+        **{key: payload[key] for key in MODEL_RUNTIME_FIELDS},
+    )
+    if model_hash(config) != snapshot.model_config_hash:
+        raise ValueError("Model Config Hash mismatch")
+    return ModelConfigSnapshot(
+        **config.model_dump(mode="json"),
+        id=snapshot.id,
+        enabled=snapshot.enabled,
+        model_config_hash=snapshot.model_config_hash,
+    )
 
 
 def business_snapshot(

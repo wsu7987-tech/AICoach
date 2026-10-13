@@ -50,7 +50,11 @@ class QwenProvider:
         backoff_base_seconds: float = 0.25,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        self.model_config = model_config
+        # Do not retain a caller-owned mutable snapshot. The public accessor also
+        # returns a copy, so transport settings and request parameters cannot drift.
+        self._model_config = ModelConfigSnapshot.model_validate(
+            model_config.model_dump(mode="json")
+        )
         self.base_url = model_config.base_url
         self.queue_wait_timeout = queue_wait_timeout
         self.backoff_base_seconds = backoff_base_seconds
@@ -64,6 +68,13 @@ class QwenProvider:
             # Model endpoints must not inherit an unexpected corporate proxy.
             http_client=http_client or httpx.AsyncClient(trust_env=False),
         )
+
+    @property
+    def model_config(self) -> ModelConfigSnapshot:
+        return self._model_config.model_copy(deep=True)
+
+    async def close(self) -> None:
+        await self._client.close()
 
     @property
     def sdk_max_retries(self) -> int:
