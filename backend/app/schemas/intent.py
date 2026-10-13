@@ -100,13 +100,21 @@ class EvidenceItem(ContractModel):
 
 
 def _validate_clarification(
-    route: RouteKey, need_clarification: bool, clarification: str | None
+    route: RouteKey,
+    need_clarification: bool,
+    clarification: str | None,
+    *,
+    allow_training_normalization: bool = False,
 ) -> None:
     if not need_clarification and clarification is not None:
         raise ValueError("clarification must be null when need_clarification is false")
     if need_clarification and (clarification is None or not clarification.strip()):
         raise ValueError("clarification must be a non-empty string when need_clarification is true")
-    if route == "training_business" and (need_clarification or clarification is not None):
+    if (
+        route == "training_business"
+        and (need_clarification or clarification is not None)
+        and not allow_training_normalization
+    ):
         raise ValueError("training_business cannot require clarification")
 
 
@@ -118,13 +126,6 @@ def _validate_intent_order(intents: list[IntentCandidate]) -> None:
         raise ValueError("intents must be ordered by descending confidence")
 
 
-def _validate_route_intents(route: RouteKey, intents: list[IntentCandidate]) -> None:
-    """Training may be classified at the primary-route level only."""
-
-    if route != "training_business" and not intents:
-        raise ValueError("non-training routes require at least one intent")
-
-
 class IntentResult(ContractModel):
     """The public runtime result. It intentionally contains no debug fields."""
 
@@ -133,13 +134,12 @@ class IntentResult(ContractModel):
     route: RouteKey
     intents: list[IntentCandidate]
     slots: list[SlotValue] = Field(default_factory=list)
-    risk: RiskInfo | None = None
+    risk: RiskInfo | None
     need_clarification: bool
     clarification: str | None = None
 
     @model_validator(mode="after")
     def valid_runtime_invariants(self) -> IntentResult:
-        _validate_route_intents(self.route, self.intents)
         _validate_intent_order(self.intents)
         _validate_clarification(self.route, self.need_clarification, self.clarification)
         return self
@@ -151,7 +151,7 @@ class LLMStructuredIntentOutput(ContractModel):
     route: RouteKey
     intents: list[IntentCandidate]
     slots: list[SlotValue] = Field(default_factory=list)
-    risk: RiskInfo | None = None
+    risk: RiskInfo | None
     need_clarification: bool
     clarification: str | None = None
     reason_summary: str | None = None
@@ -159,9 +159,13 @@ class LLMStructuredIntentOutput(ContractModel):
 
     @model_validator(mode="after")
     def valid_llm_invariants(self) -> LLMStructuredIntentOutput:
-        _validate_route_intents(self.route, self.intents)
         _validate_intent_order(self.intents)
-        _validate_clarification(self.route, self.need_clarification, self.clarification)
+        _validate_clarification(
+            self.route,
+            self.need_clarification,
+            self.clarification,
+            allow_training_normalization=True,
+        )
         return self
 
 
@@ -351,8 +355,12 @@ class PromptBuildResult(ContractModel):
 
 
 class OutputValidationIssue(ContractModel):
-    code: Literal["SLOT_SPAN_INVALID"]
-    slot: SlotValue
+    code: Literal[
+        "SLOT_SPAN_INVALID",
+        "INTENTS_EMPTY_NON_TRAINING",
+        "CLARIFICATION_FORCED_OFF",
+    ]
+    slot: SlotValue | None = None
 
 
 class ValidatedIntentOutput(ContractModel):
@@ -394,8 +402,18 @@ def validate_llm_output(
         )
 
     slots_by_name = {item.name: item for item in config.active_slots}
-    normalized_slots: list[SlotValue] = []
     issues: list[OutputValidationIssue] = []
+    if not output.intents and output.route != "training_business":
+        issues.append(OutputValidationIssue(code="INTENTS_EMPTY_NON_TRAINING"))
+
+    normalized_need_clarification = output.need_clarification
+    normalized_clarification = output.clarification
+    if output.route == "training_business" and output.need_clarification:
+        normalized_need_clarification = False
+        normalized_clarification = None
+        issues.append(OutputValidationIssue(code="CLARIFICATION_FORCED_OFF"))
+
+    normalized_slots: list[SlotValue] = []
     for slot in output.slots:
         configured_slot = slots_by_name.get(slot.name)
         if configured_slot is None:
@@ -430,8 +448,8 @@ def validate_llm_output(
             intents=normalized_intents,
             slots=normalized_slots,
             risk=output.risk,
-            need_clarification=output.need_clarification,
-            clarification=output.clarification,
+            need_clarification=normalized_need_clarification,
+            clarification=normalized_clarification,
         ),
         validation_issues=issues,
     )

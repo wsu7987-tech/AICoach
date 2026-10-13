@@ -50,6 +50,7 @@ def test_training_business_supports_route_only_output_and_runtime_mapping(
     output = LLMStructuredIntentOutput(
         route="training_business",
         intents=[],
+        risk=None,
         need_clarification=False,
         clarification=None,
     )
@@ -60,6 +61,7 @@ def test_training_business_supports_route_only_output_and_runtime_mapping(
         text="开始训练",
         route="training_business",
         intents=[],
+        risk=None,
         need_clarification=False,
         clarification=None,
     )
@@ -70,32 +72,58 @@ def test_training_business_supports_route_only_output_and_runtime_mapping(
     assert "minItems" not in schema["properties"]["intents"]
     assert "intents" in schema["required"]
 
-    with pytest.raises(ValidationError, match="training_business cannot require clarification"):
-        LLMStructuredIntentOutput(
-            route="training_business",
-            intents=[],
-            need_clarification=True,
-            clarification="请选择训练项目",
-        )
+    raw_training_clarification = LLMStructuredIntentOutput(
+        route="training_business",
+        intents=[],
+        risk=None,
+        need_clarification=True,
+        clarification="请选择训练项目",
+    )
+    normalized = validate_llm_output(
+        raw_training_clarification, snapshot, request_id="req_2", text="开始训练"
+    )
+
+    assert normalized.result.need_clarification is False
+    assert normalized.result.clarification is None
+    assert [issue.code for issue in normalized.validation_issues] == ["CLARIFICATION_FORCED_OFF"]
 
 
-def test_non_training_routes_require_an_intent() -> None:
-    with pytest.raises(ValidationError, match="non-training routes require at least one intent"):
-        LLMStructuredIntentOutput(
-            route="social_chat",
-            intents=[],
-            need_clarification=False,
-            clarification=None,
-        )
-    with pytest.raises(ValidationError, match="non-training routes require at least one intent"):
-        IntentResult(
-            request_id="req_1",
-            text="你好",
-            route="social_chat",
-            intents=[],
-            need_clarification=False,
-            clarification=None,
-        )
+@pytest.mark.parametrize(
+    "route",
+    [
+        "training_business",
+        "information_query",
+        "sports_knowledge",
+        "safety",
+        "dialogue_device_control",
+        "social_chat",
+        "unknown",
+    ],
+)
+def test_all_routes_support_route_only_output(route: str, snapshot: RuntimeConfigSnapshot) -> None:
+    output = LLMStructuredIntentOutput(
+        route=route,
+        intents=[],
+        risk=None,
+        need_clarification=False,
+        clarification=None,
+    )
+
+    validated = validate_llm_output(output, snapshot, request_id="req_1", text="你好")
+    runtime = IntentResult(
+        request_id="req_1",
+        text="你好",
+        route=route,
+        intents=[],
+        risk=None,
+        need_clarification=False,
+        clarification=None,
+    )
+
+    assert runtime.intents == []
+    assert validated.result.route == route
+    expected_issue_codes = [] if route == "training_business" else ["INTENTS_EMPTY_NON_TRAINING"]
+    assert [issue.code for issue in validated.validation_issues] == expected_issue_codes
 
 
 @pytest.mark.parametrize("confidence", [-0.01, 1.01])
@@ -123,14 +151,39 @@ def test_runtime_contract_rejects_debug_fields_and_invalid_input() -> None:
         IntentAnalyzeRequest(text=" \n\t ")
 
 
+def test_risk_is_required_but_null_is_valid_and_runtime_fields_are_exact() -> None:
+    payload = {
+        "request_id": "req_1",
+        "text": "你好",
+        "route": "social_chat",
+        "intents": [],
+        "slots": [],
+        "risk": None,
+        "need_clarification": False,
+        "clarification": None,
+    }
+
+    result = IntentResult.model_validate(payload)
+
+    assert set(result.model_dump()) == set(payload)
+    with pytest.raises(ValidationError, match="risk"):
+        IntentResult.model_validate({key: value for key, value in payload.items() if key != "risk"})
+    with pytest.raises(ValidationError, match="risk"):
+        LLMStructuredIntentOutput.model_validate(
+            {
+                key: value
+                for key, value in payload.items()
+                if key not in {"request_id", "text", "risk"}
+            }
+        )
+
+
 @pytest.mark.parametrize(
     ("route", "need_clarification", "clarification"),
     [
         ("social_chat", False, "why?"),
         ("social_chat", True, None),
         ("social_chat", True, "  "),
-        ("training_business", True, "请选择训练项目"),
-        ("training_business", False, "请选择训练项目"),
     ],
 )
 def test_clarification_and_training_business_invariants(
@@ -140,6 +193,7 @@ def test_clarification_and_training_business_invariants(
         LLMStructuredIntentOutput(
             route=route,
             intents=[IntentCandidate(name="greeting", zh="问候", confidence=1)],
+            risk=None,
             need_clarification=need_clarification,
             clarification=clarification,
         )
@@ -167,6 +221,7 @@ def test_secondary_intent_must_be_enabled_and_belong_to_output_route(
     output = LLMStructuredIntentOutput(
         route="safety",
         intents=[IntentCandidate(name="start_training", zh="错误中文", confidence=1)],
+        risk=None,
         need_clarification=False,
     )
 
@@ -185,12 +240,13 @@ def test_secondary_intent_must_be_enabled_and_belong_to_output_route(
         validate_llm_output(output, disabled, request_id="req_1", text="我想训练")
 
 
-def test_utf16_span_is_repaired_when_unique_and_dropped_when_ambiguous(
+def test_utf16_span_is_repaired_when_unique_with_emoji(
     snapshot: RuntimeConfigSnapshot,
 ) -> None:
     output = LLMStructuredIntentOutput(
         route="training_business",
         intents=[IntentCandidate(name="start_training", zh="开始训练", confidence=1)],
+        risk=None,
         slots=[
             SlotValue(name="body_part", zh="身体部位", value="胸", start=2, end=3, confidence=1)
         ],
@@ -203,6 +259,34 @@ def test_utf16_span_is_repaired_when_unique_and_dropped_when_ambiguous(
     assert repaired.result.slots[0].end == 4
     assert repaired.validation_issues == []
 
+
+def test_utf16_span_is_repaired_when_unique(snapshot: RuntimeConfigSnapshot) -> None:
+    output = LLMStructuredIntentOutput(
+        route="training_business",
+        intents=[IntentCandidate(name="start_training", zh="开始训练", confidence=1)],
+        slots=[SlotValue(name="exercise", zh="动作", value="深蹲", start=0, end=2, confidence=1)],
+        risk=None,
+        need_clarification=False,
+    )
+
+    repaired = validate_llm_output(output, snapshot, request_id="req_1", text="我要做深蹲")
+
+    assert repaired.result.slots[0].start == 3
+    assert repaired.result.slots[0].end == 5
+    assert repaired.validation_issues == []
+
+
+def test_utf16_span_is_dropped_when_value_is_ambiguous(snapshot: RuntimeConfigSnapshot) -> None:
+    output = LLMStructuredIntentOutput(
+        route="training_business",
+        intents=[IntentCandidate(name="start_training", zh="开始训练", confidence=1)],
+        slots=[
+            SlotValue(name="body_part", zh="身体部位", value="胸", start=2, end=3, confidence=1)
+        ],
+        risk=None,
+        need_clarification=False,
+    )
+
     dropped = validate_llm_output(output, snapshot, request_id="req_1", text="😀练胸胸")
 
     assert dropped.result.slots == []
@@ -214,6 +298,7 @@ def test_valid_utf16_span_and_alias_are_retained(snapshot: RuntimeConfigSnapshot
     output = LLMStructuredIntentOutput(
         route="training_business",
         intents=[IntentCandidate(name="start_training", zh="开始训练", confidence=1)],
+        risk=None,
         slots=[
             SlotValue(name="body_part", zh="身体部位", value="chest", start=3, end=5, confidence=1)
         ],
@@ -233,6 +318,7 @@ def test_unlocatable_slot_is_dropped_without_failing_intent_result(
     output = LLMStructuredIntentOutput(
         route="training_business",
         intents=[],
+        risk=None,
         slots=[
             SlotValue(name="body_part", zh="身体部位", value="knee", start=0, end=1, confidence=1)
         ],
@@ -271,3 +357,18 @@ def test_snapshot_validation_rejects_mutated_missing_route_and_invalid_dict(
     invalid_document["routes"] = []
     with pytest.raises(ValidationError, match="seven fixed Route Contract"):
         validate_runtime_config_snapshot(invalid_document)
+
+
+@pytest.mark.parametrize("mutation", ["disabled", "extra", "invalid_intent_route"])
+def test_snapshot_validation_rejects_other_post_construction_mutations(
+    snapshot: RuntimeConfigSnapshot, mutation: str
+) -> None:
+    if mutation == "disabled":
+        snapshot.routes[0].enabled = False
+    elif mutation == "extra":
+        snapshot.routes.append(snapshot.routes[0].model_copy())
+    else:
+        snapshot.intents[0].route = "not_a_route"  # type: ignore[assignment]
+
+    with pytest.raises(ValidationError):
+        validate_runtime_config_snapshot(snapshot)

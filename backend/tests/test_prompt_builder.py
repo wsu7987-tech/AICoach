@@ -32,6 +32,7 @@ def test_prompt_is_deterministic_and_contains_dynamic_config_and_schema() -> Non
     assert system["business_config"]["intents"][0]["name"] == "start_training"
     assert system["business_config"]["enums"]["body_part"][0]["canonical"] == "chest"
     assert "LLMStructuredIntentOutput" in canonical_schema_text(system["output_schema"])
+    assert "minItems" not in canonical_schema_text(system["output_schema"])
     assert json.loads(first.messages[1].content)["text"] == "😀深蹲怎么做？"
 
 
