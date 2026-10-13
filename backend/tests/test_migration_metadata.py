@@ -11,4 +11,4 @@ def test_migration_revision_ids_fit_alembic_version_column() -> None:
 
     assert revision_ids
     assert all(revision_id is not None and len(revision_id) <= 32 for revision_id in revision_ids)
-    assert script.get_current_head() == "0002_release_fp_index"
+    assert script.get_current_head() == "0003_model_timeout_double"

@@ -7,6 +7,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Double,
     ForeignKey,
     Index,
     Integer,
@@ -14,6 +15,8 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
+    inspect,
     text,
 )
 from sqlalchemy.dialects.mysql import DATETIME as DateTime
@@ -48,7 +51,7 @@ class ModelConfig(Base):
     model: Mapped[str] = mapped_column(String(256), nullable=False)
     base_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     params_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
-    timeout_seconds: Mapped[float] = mapped_column(nullable=False)
+    timeout_seconds: Mapped[float] = mapped_column(Double, nullable=False)
     max_retries: Mapped[int] = mapped_column(Integer, nullable=False)
     max_concurrency: Mapped[int] = mapped_column(Integer, nullable=False)
     structured_output_mode: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -75,6 +78,28 @@ class ConfigRelease(Base):
     note: Mapped[str] = mapped_column(Text, nullable=False)
     created_by: Mapped[str] = mapped_column(String(128), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(fsp=6), nullable=False, default=_utc_now)
+
+
+@event.listens_for(ConfigRelease, "before_update")
+@event.listens_for(ConfigRelease, "before_delete")
+def reject_release_mutation(mapper, connection, target):
+    raise ValueError("historical release is immutable")
+
+
+@event.listens_for(ModelConfig, "before_update")
+def reject_model_parameter_mutation(mapper, connection, target):
+    # All versions are append-only from creation, even before their first use.
+    # Lifecycle flags remain mutable; the service guards active-release disable.
+    state = inspect(target)
+    for attribute in state.mapper.column_attrs:
+        if attribute.key not in {"enabled", "immutable_from_at"}:
+            if state.attrs[attribute.key].history.has_changes():
+                raise ValueError("model config parameters are immutable; create a new version")
+
+
+@event.listens_for(ModelConfig, "before_delete")
+def reject_model_deletion(mapper, connection, target):
+    raise ValueError("model config is immutable; disable instead")
 
 
 class RuntimeState(Base):

@@ -18,6 +18,7 @@ from app.core.settings import Settings, get_settings
 from app.db.database import Database
 from app.db.readiness import DatabaseSchemaReadiness
 from app.schemas.errors import ErrorEnvelope
+from app.services.config_service import ConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -109,10 +110,33 @@ def create_app(
     async def validation_error_handler(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        del exc
+        if request.url.path.startswith("/api/admin/"):
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "error_code": "INVALID_INPUT",
+                    "message": "请求字段校验失败",
+                    "issues": [
+                        {"field": ".".join(map(str, e["loc"])), "message": e["msg"]}
+                        for e in exc.errors()
+                    ],
+                },
+            )
         return _error_response(
             request,
             AppError(ErrorCode.INVALID_INPUT, "request validation failed", 422),
+        )
+
+    @app.exception_handler(ConfigError)
+    async def config_error_handler(request: Request, exc: ConfigError) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status,
+            content={
+                "request_id": getattr(request.state, "request_id", "req_unknown"),
+                "error_code": exc.code,
+                "message": exc.message,
+                "issues": exc.issues,
+            },
         )
 
     @app.exception_handler(StarletteHTTPException)

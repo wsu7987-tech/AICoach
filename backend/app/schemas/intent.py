@@ -263,6 +263,15 @@ class RuntimeConfigSnapshot(ContractModel):
             raise ValueError("all fixed Route Contract routes must be enabled")
 
         _ensure_unique([item.name for item in self.intents], "intent names")
+        names: dict[str, str] = {}
+        for intent in self.intents:
+            for label in (intent.name, intent.zh, *intent.aliases):
+                label = label.strip()
+                if not label:
+                    raise ValueError("intent name/zh/alias must not be blank")
+                owner = names.setdefault(label, intent.name)
+                if owner != intent.name:
+                    raise ValueError(f"intent name/zh/alias conflict: {label}")
         _ensure_unique([item.name for item in self.slots], "slot names")
         for group_name, values in self.enums.items():
             if not group_name.strip():

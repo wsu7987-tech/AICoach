@@ -1,0 +1,76 @@
+.config-center {
+  max-width: 1440px;
+  margin: 0 auto;
+}
+.config-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.config-heading p,
+.config-center small {
+  color: #5f6b80;
+}
+.config-center .el-alert {
+  margin: 12px 0;
+}
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0;
+}
+.preview-input {
+  max-width: 300px;
+}
+.model-select {
+  width: 350px;
+}
+.route-row {
+  display: grid;
+  grid-template-columns: 240px 200px 1fr;
+  gap: 16px;
+  align-items: center;
+  margin: 16px 0;
+}
+.model-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 24px;
+  margin-bottom: 24px;
+}
+.full-width {
+  grid-column: 1 / -1;
+}
+.diff-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.json-view {
+  background: #f4f7fb;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 16px;
+  max-height: 55vh;
+  overflow: auto;
+}
+.hash {
+  overflow-wrap: anywhere;
+  font-family: monospace;
+}
+.config-center textarea {
+  font-family: ui-monospace, monospace;
+}
+.config-center label {
+  display: block;
+  margin: 12px 0 8px;
+}
+@media (max-width: 900px) {
+  .route-row,
+  .model-form,
+  .diff-grid {
+    grid-template-columns: 1fr;
+  }
+}

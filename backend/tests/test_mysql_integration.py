@@ -399,7 +399,7 @@ def test_mysql_release_fingerprint_revision_preserves_existing_releases() -> Non
     existing_release_id = asyncio.run(seed_0001_release())
     assert asyncio.run(_simulate_interrupted_release_fingerprint_upgrade()) == "0001_initial_schema"
     _alembic("upgrade", "head")
-    assert asyncio.run(_alembic_version()) == "0002_release_fp_index"
+    assert asyncio.run(_alembic_version()) == "0003_model_timeout_double"
 
     async def verify_0002_release_behavior() -> None:
         database = _database()

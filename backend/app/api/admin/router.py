@@ -1,6 +1,9 @@
 from fastapi import APIRouter
 
+from app.api.admin.config import router as config_router
+
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+router.include_router(config_router)
 
 
 @router.get("/", summary="Admin API boundary")
