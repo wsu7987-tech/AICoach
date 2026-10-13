@@ -29,7 +29,7 @@ TASK-001
 
 要求：
 
-- **字段以 `docs/07` 为准**，必须包含 `config_snapshot_hash` / `release_fingerprint` / `model_config_hash` / `credential_ref` / 各 `*_truncated` 标记 / `dataset_hash` / `worker_concurrency` 等 v1.2.4 延续字段；禁止 Codex 自行改名。
+- **字段以 `docs/07` 为准**，必须包含 `config_snapshot_hash` / `release_fingerprint` / `model_config_hash` / `credential_ref` / 各 `*_truncated` 标记 / `dataset_hash` / `worker_concurrency` 等延续字段；禁止 Codex 自行改名。
 - Trace 与 Evaluation 相关索引按 docs/07 §8 一并创建。
 
 - SQLAlchemy 2.x async 优先。

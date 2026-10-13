@@ -8,6 +8,7 @@ TASK-102, TASK-201
 
 - `docs/06-API与数据结构设计.md`
 - `docs/07-数据库与配置版本设计.md`
+- `docs/10-契约不变量与验收样例.md`
 
 ## 目标
 
@@ -60,6 +61,8 @@ TASK-102, TASK-201
 - duplicate upstream request_id -> different trace_id, no DB conflict
 - Runtime response contract excludes debug fields
 - config cache refresh after active release switch
+- C10：`/ready` 缺表、缺列均 not ready（检查由 metadata 推导，`docs/10 §5`）
+- C13 / C14：error_code→HTTP 映射逐项；Runtime Trace 写失败 fail-open、Debug/Replay/Eval fail-closed
 
 ## DoD
 

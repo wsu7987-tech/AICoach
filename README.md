@@ -1,4 +1,4 @@
-# AI Coach Intent Router 一期项目执行包 v1.2.4（生产执行封版）
+# AI Coach Intent Router 一期项目执行包 v1.2.5（生产执行封版）
 
 > 定位：**以上线为目标的生产项目，不是 Demo。** “精简”仅表示减少不必要的平台化层级、依赖和重复任务；不降低 Runtime Contract、失败处理、Trace、配置版本、测试、部署和访问边界要求。
 
@@ -70,8 +70,9 @@
 7. `docs/05-评测与验收方案.md`
 8. `docs/08-部署与主系统接入设计.md`
 9. `docs/09-参考项目与采用策略.md`
-10. `AGENTS.md`
-11. `tasks/README.md`
+10. `docs/10-契约不变量与验收样例.md`（v1.2.5 新增：Contract 测试的唯一依据）
+11. `AGENTS.md`
+12. `tasks/README.md`
 
 评估模板：`assets/AI_Coach_意图识别评估集_极简版_v0.5.xlsx`（v0.5 修复备注列下拉、扩展到 500 行、新增“意图归属参考”页）
 
@@ -86,43 +87,22 @@
 - 输出修改文件、测试结果、未完成项、风险；
 - 不得擅自引入 Redis/MQ/向量库/LangGraph 等一期非必要依赖。
 
-## TASK-001 本地开发
-
-后端使用 Python 3.12+，前端使用 Node.js 20+。
-
-```powershell
-uv sync --project backend --extra dev
-uv run --project backend pytest backend/tests
-uv run --project backend ruff check backend/app backend/tests
-uv run --project backend ruff format --check backend/app backend/tests
-
-Set-Location frontend
-npm install
-npm run lint
-npm run format
-npm run build
-```
-
-启动服务：
-
-```powershell
-# backend
-uv run --project backend uvicorn app.main:app --app-dir backend --reload
-
-# frontend（另开一个终端）
-Set-Location frontend
-npm run dev
-```
-
-`GET /health` 仅表示进程存活；TASK-001 的 `GET /ready` 会明确返回 DB/config checker 尚未初始化（HTTP 503），不伪造生产 ready。Runtime 与 Admin 的骨架边界分别为 `/api/v1/` 和 `/api/admin/`，具体业务接口按任务顺序实现。
-
-## 配置调整边界（v1.2.2 起，v1.2.4 沿用）
+## 配置调整边界（v1.2.2 起，v1.2.5 沿用）
 
 日常业务调整（新增/修改二级 Intent、Slot、Enum/Alias、Few-shot、Prompt Template、既有 Route 下映射）必须通过在线 Draft -> Validate -> Evaluation -> Publish 新 Release 完成，不要求修改 Python 代码。
 
 固定 7 个一级 Route key 与 Runtime IntentResult Schema 属于对外 Contract；若后期确需调整，必须按 API/Schema 版本升级处理。
 
-## v1.2.4 小修封版要点
+## v1.2.5 执行对齐版要点
+
+- 进度：TASK-001 / 002 / 101 已完成（见 `PROJECT_STATUS.md`），下一个 Task 是 TASK-102；开工前先过 `TASK-101-ADDENDUM-v1.2.5.md` 的对齐清单。
+- 新增 `docs/10`：各一级 Route 合法/非法输出样例、`intents` 基数规则、Slot span 边界、hash 非唯一规则、`/ready` 检查清单、Snapshot 重校验规则、Contract 测试矩阵。
+- 验收门禁：每个 Task 的 DoD 必须附 `ruff check` / `ruff format --check` / `pytest -q -rs` 的实际输出；每条不变量一条 Contract 测试。
+- 独立 Review 关口与“失败即留在当前 Task”规则写入 `tasks/README.md`。
+- 工具链：包管理改为 uv（`uv run --locked --extra dev ...`）。
+- 不改 Bootstrap、Excel、Task 数量与顺序。
+
+## v1.2.4 小修封版要点（沿用）
 
 - 修复 Kubernetes readiness 首次配置死锁：`/ready` 只表示服务面就绪，Runtime 配置状态改为 `runtime_config_ready`。
 - Bootstrap 与 Draft/Snapshot 顶层 Schema 完全一致，不再混入 Route Contract/审批元数据。

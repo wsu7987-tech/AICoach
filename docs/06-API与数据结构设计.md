@@ -32,6 +32,8 @@ Response：
 
 Runtime 不返回 `reason_summary/evidence/final_prompt/raw_*` 等调试字段。
 
+> v1.2.5：`intents` 为 `0..n`（见 `docs/03 §3`）；Runtime 响应 `extra=forbid`，各路由合法/非法样例见 `docs/10 §1`。
+
 ## 2. request_id 与 trace_id
 
 - `request_id`：业务关联 ID，可由上游传入；不存在时由服务生成。

@@ -9,6 +9,7 @@ TASK-102
 - `docs/03-Intent路由与动态Prompt设计.md`
 - `docs/07-数据库与配置版本设计.md`
 - `docs/04-后台页面与交互设计.md`
+- `docs/10-契约不变量与验收样例.md`
 
 ## 目标
 
@@ -65,6 +66,8 @@ UI 操作 Draft JSON 的对应 section；研发不直接编辑数据库。
 - snapshot/hash deterministic
 - create draft from old release
 - Draft edit 不影响 Active Runtime
+- C9：同一 Snapshot 连续发布两次 → 两个 Release 并存，`config_snapshot_hash`/`release_fingerprint` 相同、`release_id` 不同；从历史 Release 回退发布成功
+- C7：Publish 前的 Validate 对“被改动的 Snapshot”重新校验（`docs/10 §3`），不信任已构造对象
 
 ## DoD
 

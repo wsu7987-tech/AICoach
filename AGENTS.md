@@ -1,4 +1,4 @@
-# Codex 项目执行约束（v1.2.4）
+# Codex 项目执行约束（v1.2.5）
 
 ## 1. 项目级原则
 
@@ -20,6 +20,7 @@
 - DB：MySQL 8
 - LLM：首期 Qwen / Alibaba Model Studio OpenAI-compatible API
 - HTTP：httpx 或 OpenAI Python SDK（统一封装在 Provider 内）
+- 包管理：uv（`uv run --locked --extra dev ...`，命令以仓库实际布局为准，如 `backend/` 下执行）
 - Test：pytest + frontend component tests + E2E
 - Deployment：Docker + Kubernetes
 
@@ -190,3 +191,14 @@ Trace 生产约束：
 - 改变现有下游依赖的错误码/HTTP 语义。
 
 Contract 变更必须升级 API/Schema 版本并补兼容与 E2E 测试。
+
+## 14. 验收门禁与 Contract 测试（v1.2.5）
+
+1. 每个 Task 的 DoD 必须附以下命令的**实际输出**，缺一不算完成：
+   `uv run --locked --extra dev ruff check .` / `ruff format --check .` / `pytest -q -rs`。
+2. `docs/10 §6` 的每条不变量至少一条 Contract 测试；新增不变量同步补进矩阵。
+3. 校验不得被已构造的实例绕过（`docs/10 §3`）；不得手写 `/ready` 的表/列清单，必须由 metadata 推导（`docs/10 §5`）。
+4. `config_snapshot_hash` / `release_fingerprint` 不得加 UNIQUE（`docs/07`）。
+5. 执行报告必须包含：实际改动文件、门禁输出、DoD 逐项结论、**参考了哪些外部资料/未参考及原因**、未完成项与风险。
+6. Review 未通过时留在当前 Task 修复，不得提前进入下一 Task（见 `tasks/README.md` 的 Review 关口）。
+7. 发现文档与实现不一致或需要改 Contract：停下记录，等待决策，不要自行选边。

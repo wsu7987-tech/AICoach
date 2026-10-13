@@ -9,6 +9,7 @@ TASK-101
 - `docs/02-系统架构设计.md`
 - `docs/03-Intent路由与动态Prompt设计.md`
 - `docs/09-参考项目与采用策略.md`
+- `docs/10-契约不变量与验收样例.md`
 - `openai/openai-python` 官方 README：Async / Retries / Timeouts / Request IDs / Raw Response
 - Alibaba/Qwen Structured Output 官方文档
 - `sohaggain/ai-text-classification-api/src/services/classifier.py`（**仅参考模块边界/typed error；禁止复制其 Tenacity retry 与同步 client**）
@@ -77,6 +78,15 @@ Mock Provider 覆盖：
 - concurrency limit 基础测试
 - async client/event-loop 不被同步模型调用阻塞
 - structured output 请求不包含 `max_tokens`
+
+## v1.2.5 追加要求（Contract 先行）
+
+1. **先写 Contract 测试再写实现**：C11 / C12（`docs/10 §6`）先红后绿。
+2. **真实验证 retry 与 attempt 对应关系**：用一个会计数请求的本地 mock HTTP server（不是 mock 掉 SDK 方法），断言：SDK `max_retries=0`；一次业务调用在 N 次失败 + 1 次成功时，服务端实际收到 N+1 个请求，且恰好产生 N+1 条 `LLMAttempt`；总 Attempt ≤ 1 + max_retries。
+3. **Qwen 能力核对**：对选定模型确认 `json_schema` strict 是否可用（真实 smoke，结果写入报告）；不可用则由 Model Config 显式选 `json_object`，不得静默降级。
+4. 输出 Schema 不含 `minItems` 等不支持关键字；请求体不含 `max_tokens`。
+5. `intents` 为 `0..n`：空 intents 不使请求失败（见 `docs/03 §3`）。
+6. 门禁：`docs/10 §7` 三条命令全绿并贴输出；报告含“参考了/未参考”。
 
 ## DoD
 

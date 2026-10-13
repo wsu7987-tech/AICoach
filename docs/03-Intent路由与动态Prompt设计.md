@@ -57,6 +57,8 @@ Parser 最终只把业务字段构造成 `IntentResult`；调试字段仅写 Tra
 
 约束：`route=training_business` 时 `need_clarification=false` 且 `clarification=null`。全局约束：`need_clarification=false -> clarification=null`；`need_clarification=true -> clarification` 必须为非空字符串。
 
+**`intents` 基数规则（v1.2.5 锁定）：** Runtime Contract 与 `LLMStructuredIntentOutput` 的 `intents` 为 `0..n`，**不设 `min_length`**，所有路由一致。理由：训练业务一期只验收一级 Route（Route-only 输出 `intents=[]` 合法）；对非训练路由，“应当至少有一个二级 Intent”由 Prompt 要求与 Evaluation 判定保证，而不是在 Schema 层拒绝整个请求（拒绝会把一个可用的一级 Route 变成 `MODEL_OUTPUT_SCHEMA_ERROR`）。非训练路由返回空 `intents` 时：请求成功，Trace `validation_json` 记录 `INTENTS_EMPTY_NON_TRAINING`，Evaluation 视为二级 Intent 不匹配。输出 Schema 不得使用 `minItems`（部分 Qwen strict 模式不支持）。完整样例见 `docs/10`。
+
 ## 4. 动态 Prompt
 
 最终 Prompt 由：
