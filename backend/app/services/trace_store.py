@@ -82,6 +82,7 @@ class DatabaseTraceStore:
         return IntentRequestTrace(
             trace_id=trace.trace_id,
             request_id=trace.request_id,
+            parent_trace_id=trace.parent_trace_id,
             source=trace.source,
             input=diagnostic_text(trace.text),
             context_json=_json(trace.context),

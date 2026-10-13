@@ -108,6 +108,15 @@ class ReleaseHistory(AdminOutput):
 class ConfigStatus(AdminOutput):
     runtime_config_ready: bool
     active_release_id: int | None
+    service_ready: bool = False
+    active_release: dict[str, Any] | None = None
+    default_model_config: ModelConfigSnapshot | None = None
+    requests_24h: int = 0
+    errors_24h: int = 0
+    avg_latency_ms: float | None = None
+    p95_latency_ms: float | None = None
+    evaluation_queued: int = 0
+    evaluation_running: int = 0
 
 
 class ModelConfigCreate(AdminInput):

@@ -109,6 +109,7 @@ def create_app(
     app.state.database = database
     app.state.readiness_checker = checker
     app.state.intent_service = intent_service
+    app.state.provider_factory = provider_factory
 
     @app.middleware("http")
     async def request_context_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]

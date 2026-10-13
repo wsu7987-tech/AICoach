@@ -85,6 +85,7 @@ class TraceRecord(BaseModel):
     text: str
     context: dict[str, Any] = Field(default_factory=dict)
     source: str = "runtime"
+    parent_trace_id: str | None = None
     model_config_id: int | None = None
     release_id: int | None = None
     config_snapshot_hash: str | None = None
@@ -187,6 +188,7 @@ class IntentService:
         context: dict[str, Any] | None = None,
         request_id: str | None = None,
         execution_mode: Literal["runtime", "debug", "replay", "evaluation"] = "runtime",
+        parent_trace_id: str | None = None,
     ) -> IntentResult:
         request = IntentAnalyzeRequest(request_id=request_id, text=text, context=context or {})
         effective_request_id = request.request_id or str(uuid4())
@@ -196,6 +198,7 @@ class IntentService:
             text=request.text,
             context=request.context,
             source=execution_mode,
+            parent_trace_id=parent_trace_id,
         )
         try:
             try:

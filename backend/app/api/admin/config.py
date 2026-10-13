@@ -24,6 +24,7 @@ from app.schemas.config import (
 )
 from app.schemas.intent import ModelConfigSnapshot, PromptBuildResult
 from app.services import config_service as service
+from app.services import debug_service
 
 router = APIRouter()
 
@@ -132,7 +133,7 @@ async def restore_draft(release_id: int, body: RestoreInput, session: Session):
 
 
 @router.get("/status/summary", response_model=ConfigStatus)
-async def status_summary(session: Session):
+async def status_summary(request: Request, session: Session):
     state = await session.get(RuntimeState, 1)
     active_id = state.active_release_id if state else None
     ready = False
@@ -142,4 +143,39 @@ async def status_summary(session: Session):
             ready = configuration["model_config_snapshot"]["enabled"]
         except service.ConfigError:
             pass
-    return {"runtime_config_ready": ready, "active_release_id": active_id}
+    active = None
+    default_model = None
+    if active_id:
+        try:
+            configuration = await service.release_configuration(session, active_id)
+            active = {
+                key: configuration[key]
+                for key in ("id", "version", "config_snapshot_hash", "release_fingerprint")
+            }
+            default_model = configuration["model_config_snapshot"]
+        except service.ConfigError:
+            pass
+    # /ready is the authoritative service-plane definition, intentionally
+    # independent from the Runtime configuration state.
+    report = await request.app.state.readiness_checker.check()
+    database = request.app.state.database
+    metrics = (
+        await debug_service.status(database.session_factory)
+        if database is not None
+        else {
+            "requests_24h": 0,
+            "errors_24h": 0,
+            "avg_latency_ms": None,
+            "p95_latency_ms": None,
+            "evaluation_queued": 0,
+            "evaluation_running": 0,
+        }
+    )
+    return {
+        "runtime_config_ready": ready,
+        "active_release_id": active_id,
+        "service_ready": bool(report and report.ready),
+        "active_release": active,
+        "default_model_config": default_model,
+        **metrics,
+    }

@@ -10,8 +10,8 @@
 | TASK-101 Intent Contract与PromptBuilder | ✅ | PASS；TASK-201 继续复用 Snapshot 校验及纯 PromptBuilder |
 | TASK-102 Qwen Provider与IntentService | CONDITIONAL PASS | P1 已关闭；P2-2 validation_issues.slot.value 限长/脱敏已由 TASK-103 真实 MySQL Trace 复测关闭，P2-1 Provider Error 耦合仍保留；REAL_QWEN_SMOKE=UNVERIFIED |
 | TASK-201 在线配置与Release | ✅ | 最终独立复核 PASS，且 TASK-102/201 interface gate PASS；见 TASK-201_FINAL_INCREMENTAL_REVIEW.md。 |
-| TASK-103 Trace与Runtime API | 待独立增量复核 | P1-1 Credential、P1-2 metadata-derived C10、P1-3 的事务/Runtime fail-open、非 Runtime fail-closed、A→B、取消、validation 与 retention 均已在隔离 MySQL 8 + localhost Provider 复测；不得自行宣布 PASS，继续禁止 TASK-202。 |
-| TASK-202 研发后台：调试/观测/Replay/Diff/状态 | ⬜ | |
+| TASK-103 Trace与Runtime API | ✅ | 最终独立增量复核 PASS；TASK-202 已获准。 |
+| TASK-202 研发后台：调试/观测/Replay/Diff/状态 | 实现完成，待最终验收确认 | 专属 localhost Provider + 隔离 MySQL + FastAPI/Vite/Playwright 主流程已通过；不自行宣称正式 PASS。 |
 | TASK-301 批量评测闭环 | ⬜ | |
 | TASK-401 生产部署与主系统接入 | ⬜ | |
 | TASK-501 自动化测试与E2E验收 | ⬜ | |
