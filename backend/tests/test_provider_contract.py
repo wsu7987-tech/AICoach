@@ -21,6 +21,7 @@ from pydantic import ValidationError
 
 from app.core.errors import ErrorCode
 from app.prompting.builder import PromptBuilder
+from app.providers.openai_compatible import OpenAICompatibleProvider
 from app.providers.qwen import ProviderError, QwenProvider
 from app.providers.types import ProviderCancelledError
 from app.schemas.config import model_hash
@@ -164,6 +165,29 @@ def test_c11_sdk_retries_are_disabled_and_each_http_request_has_one_attempt(
     assert [attempt.attempt_no for attempt in response.attempts] == [1, 2]
     assert response.attempts[0].error_code == ErrorCode.MODEL_PROVIDER_ERROR
     assert response.attempts[1].status == "succeeded"
+
+
+def test_generic_openai_compatible_provider_uses_endpoint_and_model_without_vendor_choice(
+    scenario_server: _ScenarioServer,
+) -> None:
+    scenario_server.responses = [{"status": 200, "payload": _completion("{}")}]
+    config = _model_config(
+        f"http://127.0.0.1:{scenario_server.server_port}/v1",
+        name="deepseek-compatible-test",
+        provider="openai_compatible",
+        model="deepseek-chat",
+    )
+    provider = OpenAICompatibleProvider(
+        config,
+        api_key="test-key",
+        queue_wait_timeout=0.05,
+        backoff_base_seconds=0,
+    )
+
+    response = asyncio.run(provider.invoke(_prompt()))
+
+    assert scenario_server.request_bodies[0]["model"] == "deepseek-chat"
+    assert response.attempts[0].provider == "openai_compatible"
 
 
 def test_c12_structured_requests_omit_max_tokens_and_schema_has_no_minitems(

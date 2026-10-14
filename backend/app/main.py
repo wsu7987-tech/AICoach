@@ -21,6 +21,7 @@ from app.db.readiness import DatabaseSchemaReadiness
 from app.prompting.builder import PromptBuilder
 from app.providers.factory import ModelProviderFactory
 from app.schemas.errors import ErrorEnvelope
+from app.security.credentials import CredentialCipher, CredentialConfigurationError
 from app.services.config_service import ConfigError
 from app.services.intent_service import IntentService
 from app.services.runtime_config import DatabaseRuntimeConfigLoader
@@ -56,6 +57,12 @@ def create_app(
 ) -> FastAPI:
     app_settings = settings or get_settings()
     configure_logging(app_settings.log_level)
+    try:
+        credential_cipher = CredentialCipher(app_settings.credential_encryption_key)
+    except CredentialConfigurationError:
+        # Refuse to start with a malformed configured key. An absent key remains
+        # compatible with legacy ENV credentials; new credential writes fail closed.
+        raise
     database = Database(app_settings) if app_settings.database_url else None
     provider_factory: ModelProviderFactory | None = None
     intent_service: IntentService | None = None
@@ -110,6 +117,7 @@ def create_app(
     app.state.readiness_checker = checker
     app.state.intent_service = intent_service
     app.state.provider_factory = provider_factory
+    app.state.credential_cipher = credential_cipher
 
     @app.middleware("http")
     async def request_context_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]

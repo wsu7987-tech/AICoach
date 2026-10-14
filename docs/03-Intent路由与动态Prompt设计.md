@@ -114,6 +114,10 @@ Model Config 独立版本化，至少包含：
 
 已被 Release/Trace/Evaluation 使用的 Model Config 不原地修改。
 
+> vNext 兼容说明：以上是 v1.2.5 历史 `ModelConfig` Contract，继续保留且不迁移。新的产品层
+> `managed_model` 使用稳定 `model_uid`，Credential 独立加密存储，显示名称/API Key/调用参数可按
+> `tasks/AICoach_模型管理与意图识别运行逻辑设计.md` 更新；不得改写历史 ModelConfig/Release。
+
 Disable 语义：
 - Active Release 正在引用的 Model Config 禁止 disable；先发布并激活使用其他 Model Config 的新 Release。
 - 正在运行的 Evaluation 使用创建 Run 时冻结的 Model Config snapshot；之后 disable 不影响该 Run。

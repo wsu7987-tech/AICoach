@@ -53,6 +53,43 @@ body {
   padding: clamp(24px, 6vw, 96px);
 }
 
+.primary-nav {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  max-width: 1180px;
+  margin: -8px auto 0;
+  padding-bottom: 15px;
+  border-bottom: 1px solid #dce3ef;
+}
+
+.nav-brand {
+  margin-right: auto;
+  color: #172033;
+  font-weight: 750;
+}
+
+.nav-item {
+  position: relative;
+  padding: 8px 2px;
+  color: #536078;
+}
+
+.nav-item.active {
+  color: #3156d3;
+  font-weight: 650;
+}
+
+.nav-item.active::after {
+  position: absolute;
+  right: 0;
+  bottom: -16px;
+  left: 0;
+  height: 2px;
+  background: #4569e7;
+  content: "";
+}
+
 .welcome-card {
   max-width: 840px;
   margin: 0 auto;

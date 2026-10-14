@@ -15,6 +15,7 @@
 | TASK-301 批量评测闭环 | ⬜ | |
 | TASK-401 生产部署与主系统接入 | ⬜ | |
 | TASK-501 自动化测试与E2E验收 | ⬜ | |
+| vNext Step 1 模型管理重构 | 🚧 修正完成，待定向测试 | 已移除用户侧 Provider/Qwen 限制，改为 Base URL + API Key + Model Name 的通用 OpenAI-compatible 接入；尚未执行本轮修正后的定向测试。 |
 
 ## 待确认事项
 

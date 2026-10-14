@@ -10,7 +10,7 @@
 文本输入
   -> Active Config Release
   -> Dynamic Prompt Builder
-  -> Qwen/OpenAI-compatible Provider
+  -> OpenAI-compatible Provider（Qwen、DeepSeek 等兼容服务）
   -> Structured Output + Pydantic Validation
   -> Runtime Intent JSON
   -> Trace / Evaluation
@@ -30,7 +30,7 @@
 - 7 个一级 Route；训练业务一期只验收一级 Route。
 - 非训练业务可输出二级 Intent、Slots、Risk、Clarification。
 - Prompt = 固定模板 + 已发布配置动态组装。
-- Qwen/OpenAI-compatible Provider，优先 JSON Schema Structured Output。
+- 通用 OpenAI-compatible Provider，通过 Base URL + API Key + Model Name 接入兼容服务；优先 JSON Schema Structured Output。
 - 每次 Provider Attempt 可追溯；Secret 必须脱敏。
 - 在线配置：Draft -> Publish -> Immutable Release Snapshot -> Active Release -> History；历史版本可复制为新 Draft 再发布，实现安全回退。
 - 单条调试支持 repeat 1/3/5。
@@ -77,6 +77,21 @@
 评估模板：`assets/AI_Coach_意图识别评估集_极简版_v0.5.xlsx`（v0.5 修复备注列下拉、扩展到 500 行、新增“意图归属参考”页）
 
 初始业务配置：`bootstrap/initial-config.v1.json`
+
+## vNext 模型管理本地配置
+
+新的模型管理页面将 API Key 认证加密后保存到独立 Credential Store。后端必须通过环境变量
+`CREDENTIAL_ENCRYPTION_KEY` 获得 Fernet 主密钥；所有 Pod 必须使用同一个值。该值不得写入
+数据库、仓库、日志或前端配置。旧 `QWEN_API_KEY` / `credential_ref` 路径继续兼容。
+
+可在安全的本地终端生成一次主密钥：
+
+```shell
+uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+生产环境应把生成值保存在 Kubernetes Secret 或等价的部署 Secret 中，并纳入安全备份；丢失
+主密钥后，数据库内已有 Credential 无法解密。
 
 ## Codex 执行
 

@@ -62,6 +62,67 @@ class ModelConfig(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(fsp=6), nullable=False, default=_utc_now)
 
 
+class ProviderCredential(Base):
+    """Encrypted single-secret credential owned by one managed model."""
+
+    __tablename__ = "provider_credential"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    credential_uid: Mapped[str] = mapped_column(String(69), nullable=False, unique=True)
+    encrypted_secret: Mapped[str] = mapped_column(Text, nullable=False)
+    secret_hint: Mapped[str] = mapped_column(String(16), nullable=False)
+    key_version: Mapped[str] = mapped_column(String(32), nullable=False, server_default="v1")
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(fsp=6), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(fsp=6), nullable=False, default=_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(fsp=6), nullable=False, default=_utc_now, onupdate=_utc_now
+    )
+
+
+class ManagedModel(Base):
+    """Product-facing model; endpoint identity is immutable after creation."""
+
+    __tablename__ = "managed_model"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    model_uid: Mapped[str] = mapped_column(String(69), nullable=False, unique=True)
+    display_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Internal protocol adapter id; this is not a user-selected model vendor.
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    base_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    credential_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("provider_credential.id", ondelete="RESTRICT"),
+        nullable=True,
+        unique=True,
+    )
+    credential_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    params_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    timeout_seconds: Mapped[float] = mapped_column(Double, nullable=False)
+    max_retries: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_concurrency: Mapped[int] = mapped_column(Integer, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("1"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(fsp=6), nullable=False, default=_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(fsp=6), nullable=False, default=_utc_now, onupdate=_utc_now
+    )
+
+
+class RuntimeModelState(Base):
+    __tablename__ = "runtime_model_state"
+    __table_args__ = (CheckConstraint("id = 1", name="ck_runtime_model_state_singleton"),)
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, autoincrement=False)
+    default_model_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("managed_model.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(fsp=6), nullable=False, default=_utc_now)
+
+
 class ConfigRelease(Base):
     __tablename__ = "config_release"
     __table_args__ = (UniqueConstraint("version", name="uq_config_release_version"),)
@@ -100,6 +161,19 @@ def reject_model_parameter_mutation(mapper, connection, target):
 @event.listens_for(ModelConfig, "before_delete")
 def reject_model_deletion(mapper, connection, target):
     raise ValueError("model config is immutable; disable instead")
+
+
+@event.listens_for(ManagedModel, "before_update")
+def reject_managed_model_identity_mutation(mapper, connection, target):
+    state = inspect(target)
+    for attribute in ("model_uid", "provider", "model_name", "base_url", "credential_id"):
+        if state.attrs[attribute].history.has_changes():
+            raise ValueError(f"managed model {attribute} is immutable; create a new model")
+
+
+@event.listens_for(ManagedModel, "before_delete")
+def reject_managed_model_deletion(mapper, connection, target):
+    raise ValueError("managed models cannot be deleted; disable instead")
 
 
 class RuntimeState(Base):

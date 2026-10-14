@@ -25,6 +25,7 @@ class Settings(BaseSettings):
 
     database_url: str | None = None
     qwen_api_key: str | None = Field(default=None, repr=False)
+    credential_encryption_key: str | None = Field(default=None, repr=False)
 
     max_text_chars: int = 2000
     max_context_bytes: int = 16_384
