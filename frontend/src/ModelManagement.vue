@@ -275,13 +275,11 @@ onMounted(() => void loadModels());
   <section class="model-management" v-loading="loading">
     <div class="page-heading">
       <div>
-        <p class="section-kicker">MODEL SETTINGS</p>
-        <h2>模型管理</h2>
         <p class="page-description">
           添加并验证用于意图识别的模型连接，默认模型可随时切换。
         </p>
       </div>
-      <el-button type="primary" size="large" @click="openCreate">
+      <el-button type="primary" @click="openCreate">
         ＋ 添加模型
       </el-button>
     </div>
@@ -366,8 +364,12 @@ onMounted(() => void loadModels());
 
     <el-dialog
       v-model="dialogVisible"
+      class="model-dialog"
+      modal-class="model-dialog-overlay"
       :title="dialogTitle"
-      width="min(720px, 94vw)"
+      width="min(540px, 94vw)"
+      align-center
+      lock-scroll
       :close-on-click-modal="false"
       destroy-on-close
     >

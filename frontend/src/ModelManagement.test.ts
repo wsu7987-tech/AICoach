@@ -41,7 +41,7 @@ afterEach(() => {
 async function render() {
   wrapper = mount(ModelManagement, {
     attachTo: document.body,
-    global: { plugins: [ElementPlus], stubs: { teleport: true } },
+    global: { plugins: [ElementPlus] },
   });
   await flushPromises();
 }
@@ -76,6 +76,8 @@ it("opens a friendly create form with masked API key input and no version field"
   expect(document.body.textContent).not.toContain("Credential Ref");
   expect(document.body.textContent).not.toContain("创建模型版本");
   expect(document.body.querySelector('input[type="password"]')).not.toBeNull();
+  expect(document.body.querySelector(".model-dialog")).not.toBeNull();
+  expect(document.body.querySelector(".model-dialog-overlay")).not.toBeNull();
 });
 
 it("shows connection verification failures next to the action without clearing inputs", async () => {
@@ -87,20 +89,27 @@ it("shows connection verification failures next to the action without clearing i
   await add!.trigger("click");
   await flushPromises();
 
-  const baseUrl = wrapper.find('input[placeholder="例如：https://api.example.com/v1"]');
-  const apiKey = wrapper.find('input[placeholder="输入 API Key"]');
-  await baseUrl.setValue("https://api.example.com/v1");
-  await apiKey.setValue("secret-value");
-  const verifyButton = wrapper
-    .findAll("button")
-    .find((item) => item.text().includes("验证连接"));
-  await verifyButton!.trigger("click");
+  const baseUrl = document.querySelector<HTMLInputElement>(
+    'input[placeholder="例如：https://api.example.com/v1"]',
+  )!;
+  const apiKey = document.querySelector<HTMLInputElement>(
+    'input[placeholder="输入 API Key"]',
+  )!;
+  baseUrl.value = "https://api.example.com/v1";
+  baseUrl.dispatchEvent(new Event("input", { bubbles: true }));
+  apiKey.value = "secret-value";
+  apiKey.dispatchEvent(new Event("input", { bubbles: true }));
+  await flushPromises();
+  const verifyButton = Array.from(document.body.querySelectorAll("button")).find(
+    (item) => item.textContent?.includes("验证连接"),
+  )!;
+  verifyButton.click();
   await flushPromises();
 
-  expect(wrapper.text()).toContain("连接验证失败：认证失败，请检查 API Key");
-  expect((baseUrl.element as HTMLInputElement).value).toBe(
-    "https://api.example.com/v1",
+  expect(document.body.textContent).toContain(
+    "连接验证失败：认证失败，请检查 API Key",
   );
-  expect((apiKey.element as HTMLInputElement).value).toBe("secret-value");
-  expect(verifyButton!.attributes("disabled")).toBeUndefined();
+  expect(baseUrl.value).toBe("https://api.example.com/v1");
+  expect(apiKey.value).toBe("secret-value");
+  expect(verifyButton.disabled).toBe(false);
 });

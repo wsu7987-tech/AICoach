@@ -2,6 +2,13 @@
 import { computed, ref } from "vue";
 import { ConfigApiError, request } from "./configApi";
 
+withDefaults(
+  defineProps<{
+    section?: "debug" | "observability" | "status";
+  }>(),
+  { section: "debug" },
+);
+
 type Trace = {
   trace_id: string;
   parent_trace_id?: string | null;
@@ -71,6 +78,7 @@ async function loadStatus() {
 <template>
   <div class="debug-grid">
     <el-card
+      v-if="section === 'debug'"
       ><template #header>单条调试</template
       ><el-input
         v-model="text"
@@ -103,10 +111,11 @@ async function loadStatus() {
         </el-collapse-item></el-collapse
       ></el-card
     ><el-card
+      v-if="section === 'status'"
       ><template #header>服务状态</template
       ><el-button @click="loadStatus">刷新</el-button>
       <pre v-if="status">{{ JSON.stringify(status, null, 2) }}</pre></el-card
-    ><el-card class="wide"
+    ><el-card v-if="section === 'observability'" class="wide"
       ><template #header>调用观测 / Replay</template
       ><el-button @click="loadTraces">刷新 Trace</el-button
       ><el-table :data="traces" style="width: 100%; margin-top: 12px"
@@ -128,7 +137,7 @@ async function loadStatus() {
       <pre v-if="selected">{{
         JSON.stringify(selected, null, 2)
       }}</pre></el-card
-    ><el-card class="wide"
+    ><el-card v-if="section === 'observability'" class="wide"
       ><template #header>Trace Diff</template
       ><el-space wrap
         ><el-input v-model="left" placeholder="左 Trace ID" /><el-input

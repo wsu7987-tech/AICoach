@@ -251,7 +251,6 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
   <section class="config-center" v-loading="busy">
     <div class="config-heading">
       <div>
-        <h2>配置中心</h2>
         <p>编辑 Draft → 校验 → Prompt 预览 → 发布新 Release</p>
       </div>
       <el-button @click="reload" :disabled="busy">重新载入</el-button>

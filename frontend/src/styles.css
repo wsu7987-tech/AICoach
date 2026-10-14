@@ -1,4 +1,13 @@
 :root {
+  --el-font-size-extra-large: 16px;
+  --el-font-size-large: 14px;
+  --el-font-size-medium: 13px;
+  --el-font-size-base: 12px;
+  --el-font-size-small: 11px;
+  --el-font-size-extra-small: 10px;
+  --el-component-size-large: 32px;
+  --el-component-size: 28px;
+  --el-component-size-small: 24px;
   color: #172033;
   font-family:
     Inter,
@@ -15,115 +24,172 @@
   box-sizing: border-box;
 }
 
-body {
-  margin: 0;
+html,
+body,
+#app {
   min-width: 320px;
+  min-height: 100%;
+  margin: 0;
 }
 
-.shell {
+body {
+  font-size: 13px;
+}
+
+.admin-shell {
+  display: flex;
   min-height: 100vh;
 }
 
-.header {
+.admin-sidebar {
+  position: sticky;
+  top: 0;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 24px clamp(24px, 6vw, 96px);
+  width: 180px;
+  height: 100vh;
+  padding: 14px 10px;
+  flex: 0 0 180px;
+  flex-direction: column;
   background: #172033;
-  color: white;
+  color: #fff;
 }
 
-.header h1,
-.eyebrow {
-  margin: 0;
-}
-
-.header h1 {
-  font-size: 24px;
-  font-weight: 650;
-}
-
-.eyebrow {
-  color: #a9b7d0;
-  font-size: 11px;
-  letter-spacing: 0.18em;
-}
-
-.el-main {
-  padding: clamp(24px, 6vw, 96px);
-}
-
-.primary-nav {
+.admin-brand {
   display: flex;
   align-items: center;
-  gap: 28px;
-  max-width: 1180px;
-  margin: -8px auto 0;
-  padding-bottom: 15px;
-  border-bottom: 1px solid #dce3ef;
+  gap: 9px;
+  padding: 2px 8px 14px;
+  border-bottom: 1px solid rgb(255 255 255 / 10%);
 }
 
-.nav-brand {
-  margin-right: auto;
-  color: #172033;
+.admin-brand > div {
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-brand strong {
+  font-size: 13px;
+}
+
+.admin-brand small {
+  color: #93a2bd;
+  font-size: 9px;
+}
+
+.brand-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: #4967d8;
+  font-size: 11px;
   font-weight: 750;
 }
 
-.nav-item {
-  position: relative;
-  padding: 8px 2px;
-  color: #536078;
+.admin-navigation {
+  padding-top: 12px;
 }
 
-.nav-item.active {
-  color: #3156d3;
-  font-weight: 650;
+.nav-group {
+  margin-bottom: 14px;
 }
 
-.nav-item.active::after {
-  position: absolute;
-  right: 0;
-  bottom: -16px;
-  left: 0;
-  height: 2px;
-  background: #4569e7;
-  content: "";
+.nav-group p {
+  margin: 0 8px 5px;
+  color: #71819e;
+  font-size: 9px;
+  letter-spacing: 0.08em;
 }
 
-.welcome-card {
-  max-width: 840px;
-  margin: 0 auto;
-  border: 0;
-  border-radius: 16px;
+.nav-group a {
+  display: block;
+  margin-bottom: 2px;
+  padding: 7px 9px;
+  border-radius: 5px;
+  color: #b9c4d8;
+  text-decoration: none;
 }
 
-.welcome-card p {
-  color: #5f6b80;
-  line-height: 1.7;
+.nav-group a:hover,
+.nav-group a.active {
+  background: rgb(91 124 250 / 16%);
+  color: #fff;
 }
 
-.boundary-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-  margin-top: 28px;
-}
-
-.boundary-grid div {
-  display: grid;
-  gap: 6px;
-  padding: 18px;
+.admin-content {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
   background: #f4f7fb;
-  border-radius: 10px;
 }
 
-.boundary-grid span {
-  color: #6d7890;
-  font-size: 14px;
+.content-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 52px;
+  padding: 0 20px;
+  flex: 0 0 52px;
+  border-bottom: 1px solid #e1e6ef;
+  background: #fff;
 }
 
-@media (max-width: 560px) {
-  .boundary-grid {
-    grid-template-columns: 1fr;
+.content-header p,
+.content-header h1 {
+  margin: 0;
+}
+
+.content-header p {
+  color: #8a96aa;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+}
+
+.content-header h1 {
+  margin-top: 1px;
+  font-size: 16px;
+}
+
+.content-body {
+  display: flex;
+  width: 100%;
+  padding: 16px 20px;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.content-body > * {
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 680px) {
+  .admin-shell {
+    flex-direction: column;
+  }
+
+  .admin-sidebar {
+    position: static;
+    width: 100%;
+    height: auto;
+    padding: 10px;
+    flex-basis: auto;
+  }
+
+  .admin-navigation {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .content-header {
+    padding: 0 12px;
+  }
+
+  .content-body {
+    padding: 12px;
   }
 }
