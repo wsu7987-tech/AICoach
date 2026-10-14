@@ -55,6 +55,7 @@ class IntentAnalyzeRequest(ContractModel):
     request_id: str | None = Field(default=None, min_length=1, max_length=128)
     text: str = Field(min_length=1)
     conversation_id: str | None = Field(default=None, min_length=1, max_length=128)
+    model_uid: str | None = Field(default=None, pattern=r"^mdl_[a-f0-9]{64}$")
     context: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("text")

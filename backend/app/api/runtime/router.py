@@ -11,9 +11,9 @@ router = APIRouter(prefix="/api/v1", tags=["runtime"])
 
 @router.get("/", summary="Runtime API boundary")
 async def runtime_boundary() -> dict[str, str]:
-    """Expose only the skeleton boundary; business endpoints arrive in later tasks."""
+    """Expose the public Runtime API boundary."""
 
-    return {"scope": "runtime", "status": "skeleton"}
+    return {"scope": "runtime", "status": "available"}
 
 
 @router.post("/intent/analyze", response_model=IntentResult)
@@ -48,5 +48,6 @@ async def analyze_intent(request: Request) -> IntentResult:
         text=parsed.text,
         context=parsed.context,
         request_id=parsed.request_id or request.state.request_id,
+        model_uid=parsed.model_uid,
         execution_mode="runtime",
     )

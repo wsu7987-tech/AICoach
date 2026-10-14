@@ -68,9 +68,26 @@ def test_runtime_analyze_public_contract_and_upstream_request_id() -> None:
             "text": "你好",
             "context": {"page": "home"},
             "request_id": "upstream",
+            "model_uid": None,
             "execution_mode": "runtime",
         }
     ]
+
+
+def test_runtime_analyze_forwards_optional_managed_model_uid() -> None:
+    app = create_app()
+    service = _RuntimeService(_result("selected-model"))
+    app.state.intent_service = service
+    model_uid = f"mdl_{'a' * 64}"
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/intent/analyze",
+            json={"text": "你好", "model_uid": model_uid},
+        )
+
+    assert response.status_code == 200
+    assert service.calls[0]["model_uid"] == model_uid
+    assert "model_uid" not in response.json()
 
 
 @pytest.mark.parametrize(

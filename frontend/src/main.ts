@@ -6,5 +6,6 @@ import App from "./App.vue";
 import "./styles.css";
 import "./config-center.css";
 import "./model-management.css";
+import "./intent-recognition.css";
 
 createApp(App).use(ElementPlus).mount("#app");

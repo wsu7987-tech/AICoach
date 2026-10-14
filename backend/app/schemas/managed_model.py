@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
@@ -141,3 +141,37 @@ class ManagedModelList(BaseModel):
 
     default_model_uid: str | None
     items: list[ManagedModelView]
+
+
+class ManagedModelRuntimeSnapshot(BaseModel):
+    """Secret-free settings for one concrete ManagedModel invocation.
+
+    This is deliberately a different contract from the historical
+    ``ModelConfigSnapshot`` frozen into a ConfigRelease.  Runtime traces may
+    persist this value, but credentials and credential identifiers never enter
+    the snapshot.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    snapshot_type: Literal["managed_model"] = "managed_model"
+    id: int = Field(gt=0)
+    model_uid: str = Field(pattern=r"^mdl_[a-f0-9]{64}$")
+    display_name: str = Field(min_length=1, max_length=128)
+    provider: Literal["openai_compatible"]
+    model_name: str = Field(min_length=1, max_length=256)
+    base_url: str = Field(min_length=1, max_length=2048)
+    params_json: dict[str, Any] = Field(default_factory=dict)
+    timeout_seconds: float = Field(gt=0, le=600)
+    max_retries: int = Field(ge=0, le=5)
+    max_concurrency: int = Field(gt=0, le=256)
+    enabled: bool
+    # The first managed-model adapter targets the common OpenAI-compatible
+    # JSON mode. Provider-specific capability selection remains out of scope.
+    structured_output_mode: Literal["json_object"] = "json_object"
+
+    @property
+    def model(self) -> str:
+        """Protocol-level model name used by OpenAI-compatible clients."""
+
+        return self.model_name

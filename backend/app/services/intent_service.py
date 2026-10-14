@@ -13,7 +13,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from app.core.diagnostics import bounded_validation_issues, diagnostic_text, error_summary, sanitize
 from app.core.errors import AppError, ErrorCode
 from app.prompting.builder import PromptBuilder
-from app.providers.factory import ModelProviderFactory, configuration_error, verify_provider
+from app.providers.factory import (
+    ModelProviderFactory,
+    configuration_error,
+    verify_managed_provider,
+    verify_provider,
+)
 from app.providers.qwen import ProviderError
 from app.providers.types import LLMAttempt, LLMProvider, ProviderCancelledError, diagnostic_attempts
 from app.schemas.config import business_snapshot, release_fingerprint, verified_model_snapshot
@@ -27,6 +32,7 @@ from app.schemas.intent import (
     RuntimeConfigSnapshot,
     validate_llm_output,
 )
+from app.services.runtime_model import ResolvedManagedModel
 
 logger = logging.getLogger(__name__)
 CANCEL_TRACE_TIMEOUT_SECONDS = 0.1
@@ -71,8 +77,42 @@ class RuntimeConfiguration(BaseModel):
         )
 
 
+class BusinessRuntimeConfiguration(BaseModel):
+    """Active Release business inputs, independent from the execution model."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    snapshot: RuntimeConfigSnapshot
+    release_id: int = Field(gt=0)
+    config_snapshot_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    release_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @model_validator(mode="after")
+    def verify_business_provenance(self) -> BusinessRuntimeConfiguration:
+        payload, digest = business_snapshot(self.snapshot)
+        if digest != self.config_snapshot_hash:
+            raise ValueError("Release business provenance mismatch")
+        self.snapshot = RuntimeConfigSnapshot.model_validate(payload)
+        return self
+
+    @classmethod
+    def from_verified_release(cls, release: dict[str, Any]) -> BusinessRuntimeConfiguration:
+        """Build from config_service.release_configuration after full legacy integrity checks."""
+
+        return cls(
+            snapshot=release["snapshot_json"],
+            release_id=release["id"],
+            config_snapshot_hash=release["config_snapshot_hash"],
+            release_fingerprint=release["release_fingerprint"],
+        )
+
+
 class RuntimeConfigLoader(Protocol):
-    async def load(self) -> RuntimeConfiguration: ...
+    async def load(self) -> RuntimeConfiguration | BusinessRuntimeConfiguration: ...
+
+
+class ManagedModelLoader(Protocol):
+    async def load(self, model_uid: str | None) -> ResolvedManagedModel: ...
 
 
 class TraceRecord(BaseModel):
@@ -92,6 +132,7 @@ class TraceRecord(BaseModel):
     model_config_hash: str | None = None
     release_fingerprint: str | None = None
     model_config_snapshot: dict[str, Any] | None = None
+    managed_model_snapshot: dict[str, Any] | None = None
     attempts: list[LLMAttempt] = Field(default_factory=list)
     validation_issues: list[OutputValidationIssue] = Field(default_factory=list)
     final_result: dict[str, Any] | None = None
@@ -101,6 +142,7 @@ class TraceRecord(BaseModel):
     cancelled: bool = False
     error_code: ErrorCode | None = None
     error_message: str | None = None
+    failure_stage: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -175,11 +217,13 @@ class IntentService:
         provider: LLMProvider | ModelProviderFactory,
         prompt_builder: PromptBuilder,
         trace_sink: TraceSink,
+        managed_model_loader: ManagedModelLoader | None = None,
     ) -> None:
         self._config_loader = config_loader
         self._provider = provider
         self._prompt_builder = prompt_builder
         self._trace_sink = trace_sink
+        self._managed_model_loader = managed_model_loader
 
     async def analyze(
         self,
@@ -187,10 +231,16 @@ class IntentService:
         text: str,
         context: dict[str, Any] | None = None,
         request_id: str | None = None,
+        model_uid: str | None = None,
         execution_mode: Literal["runtime", "debug", "replay", "evaluation"] = "runtime",
         parent_trace_id: str | None = None,
     ) -> IntentResult:
-        request = IntentAnalyzeRequest(request_id=request_id, text=text, context=context or {})
+        request = IntentAnalyzeRequest(
+            request_id=request_id,
+            text=text,
+            model_uid=model_uid,
+            context=context or {},
+        )
         effective_request_id = request.request_id or str(uuid4())
         trace = TraceRecord(
             trace_id=str(uuid4()),
@@ -205,21 +255,42 @@ class IntentService:
                 loaded = await self._config_loader.load()
                 # A loader may return a mutated Pydantic instance. Never trust it
                 # or retain references that another request can change.
-                config = RuntimeConfiguration.model_validate(loaded.model_dump(mode="json"))
+                if self._managed_model_loader is None:
+                    config: RuntimeConfiguration | BusinessRuntimeConfiguration = (
+                        RuntimeConfiguration.model_validate(loaded.model_dump(mode="json"))
+                    )
+                else:
+                    config = BusinessRuntimeConfiguration.model_validate(
+                        loaded.model_dump(mode="json")
+                    )
             except ValueError:
                 raise configuration_error() from None
-            trace.model_config_id = config.model_config_snapshot.id
             trace.release_id = config.release_id
             trace.config_snapshot_hash = config.config_snapshot_hash
-            trace.model_config_hash = config.model_config_hash
             trace.release_fingerprint = config.release_fingerprint
-            trace.model_config_snapshot = config.model_config_snapshot.model_dump(mode="json")
-            provider = (
-                self._provider.resolve(config.model_config_snapshot)
-                if isinstance(self._provider, ModelProviderFactory)
-                else self._provider
-            )
-            verify_provider(provider, config.model_config_snapshot)
+            if self._managed_model_loader is not None:
+                if not isinstance(self._provider, ModelProviderFactory):
+                    raise configuration_error()
+                resolved = await self._managed_model_loader.load(request.model_uid)
+                trace.managed_model_snapshot = resolved.snapshot.model_dump(mode="json")
+                provider = self._provider.resolve_managed(
+                    resolved.snapshot,
+                    api_key=resolved.api_key,
+                    credential_revision=resolved.credential_revision,
+                )
+                verify_managed_provider(provider, resolved.snapshot)
+            else:
+                if not isinstance(config, RuntimeConfiguration):
+                    raise configuration_error()
+                trace.model_config_id = config.model_config_snapshot.id
+                trace.model_config_hash = config.model_config_hash
+                trace.model_config_snapshot = config.model_config_snapshot.model_dump(mode="json")
+                provider = (
+                    self._provider.resolve(config.model_config_snapshot)
+                    if isinstance(self._provider, ModelProviderFactory)
+                    else self._provider
+                )
+                verify_provider(provider, config.model_config_snapshot)
             prompt = self._prompt_builder.build(config.snapshot, request.text, request.context)
             trace.prompt = prompt.model_dump(mode="json")
             response = await provider.invoke(prompt)
@@ -251,12 +322,18 @@ class IntentService:
             trace.attempts = exc.attempts
             trace.error_code = exc.code
             trace.error_message = exc.message
+            trace.failure_stage = exc.failure_stage or "provider_server"
             await self._persist_failure(trace, fail_open=execution_mode == "runtime")
             raise
         except IntentServiceError as exc:
             trace.attempts = exc.attempts
             trace.error_code = exc.code
             trace.error_message = exc.message
+            trace.failure_stage = (
+                "model_output"
+                if exc.code == ErrorCode.MODEL_OUTPUT_PARSE_ERROR
+                else "schema_validation"
+            )
             await self._persist_failure(trace, fail_open=execution_mode == "runtime")
             raise
         except BusinessOutputValidationError as exc:
@@ -265,6 +342,16 @@ class IntentService:
             )
             trace.error_code = error.code
             trace.error_message = error.message
+            trace.failure_stage = "business_validation"
+            await self._persist_failure(trace, fail_open=execution_mode == "runtime")
+            raise error from None
+        except AppError:
+            raise
+        except Exception:
+            error = AppError(ErrorCode.INTERNAL_ERROR, "internal intent analysis error", 500)
+            trace.error_code = error.code
+            trace.error_message = error.message
+            trace.failure_stage = "internal"
             await self._persist_failure(trace, fail_open=execution_mode == "runtime")
             raise error from None
 

@@ -24,7 +24,8 @@ from app.schemas.errors import ErrorEnvelope
 from app.security.credentials import CredentialCipher, CredentialConfigurationError
 from app.services.config_service import ConfigError
 from app.services.intent_service import IntentService
-from app.services.runtime_config import DatabaseRuntimeConfigLoader
+from app.services.runtime_config import DatabaseBusinessConfigLoader
+from app.services.runtime_model import DatabaseManagedModelLoader
 from app.services.trace_store import DatabaseTraceStore
 
 logger = logging.getLogger(__name__)
@@ -78,12 +79,17 @@ def create_app(
             credential_resolver, queue_wait_timeout=app_settings.provider_queue_wait_timeout
         )
         intent_service = IntentService(
-            DatabaseRuntimeConfigLoader(
+            DatabaseBusinessConfigLoader(
                 database.session_factory, ttl_seconds=app_settings.runtime_config_cache_ttl_seconds
             ),
             provider_factory,
             PromptBuilder(),
             DatabaseTraceStore(database.session_factory),
+            DatabaseManagedModelLoader(
+                database.session_factory,
+                credential_cipher,
+                credential_resolver,
+            ),
         )
     checker = readiness_checker or ReadinessChecker()
     if readiness_checker is None:

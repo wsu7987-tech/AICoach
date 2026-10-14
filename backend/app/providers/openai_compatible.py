@@ -19,7 +19,10 @@ from app.providers.types import (
     ProviderCancelledError,
     diagnostic_attempts,
 )
+from app.schemas.managed_model import ManagedModelRuntimeSnapshot
 from app.schemas.intent import LLMStructuredIntentOutput, ModelConfigSnapshot, PromptBuildResult
+
+ProviderConfigSnapshot = ModelConfigSnapshot | ManagedModelRuntimeSnapshot
 
 
 class ProviderError(AppError):
@@ -33,9 +36,11 @@ class ProviderError(AppError):
         *,
         attempts: list[LLMAttempt],
         retry_after: int | None = None,
+        failure_stage: str | None = None,
     ) -> None:
         super().__init__(code, error_summary(message), status_code, retry_after=retry_after)
         self.attempts = diagnostic_attempts(attempts)
+        self.failure_stage = failure_stage
 
 
 class OpenAICompatibleProvider:
@@ -43,7 +48,7 @@ class OpenAICompatibleProvider:
 
     def __init__(
         self,
-        model_config: ModelConfigSnapshot,
+        model_config: ProviderConfigSnapshot,
         *,
         api_key: str,
         queue_wait_timeout: float,
@@ -51,9 +56,7 @@ class OpenAICompatibleProvider:
         backoff_base_seconds: float = 0.25,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._model_config = ModelConfigSnapshot.model_validate(
-            model_config.model_dump(mode="json")
-        )
+        self._model_config = type(model_config).model_validate(model_config.model_dump(mode="json"))
         self._provider_name = provider_name
         self.base_url = model_config.base_url
         self.queue_wait_timeout = queue_wait_timeout
@@ -68,7 +71,7 @@ class OpenAICompatibleProvider:
         )
 
     @property
-    def model_config(self) -> ModelConfigSnapshot:
+    def model_config(self) -> ProviderConfigSnapshot:
         return self._model_config.model_copy(deep=True)
 
     async def close(self) -> None:
@@ -157,6 +160,7 @@ class OpenAICompatibleProvider:
                     status_code,
                     attempts=attempts,
                     retry_after=self._retry_after(exc),
+                    failure_stage=self._failure_stage(exc),
                 ) from None
         raise AssertionError("bounded retry loop must return or raise")
 
@@ -261,6 +265,16 @@ class OpenAICompatibleProvider:
         if isinstance(exc, openai.APIStatusError):
             return ErrorCode.MODEL_PROVIDER_ERROR, 502, exc.status_code >= 500
         return ErrorCode.MODEL_PROVIDER_ERROR, 502, False
+
+    @staticmethod
+    def _failure_stage(exc: Exception) -> str:
+        if isinstance(exc, openai.AuthenticationError):
+            return "provider_auth"
+        if isinstance(exc, openai.RateLimitError):
+            return "provider_rate_limit"
+        if isinstance(exc, (openai.APITimeoutError, openai.APIConnectionError)):
+            return "connection"
+        return "provider_server"
 
     @staticmethod
     def _safe_error_message(exc: Exception) -> str:

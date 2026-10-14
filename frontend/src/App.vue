@@ -3,11 +3,19 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import ConfigCenter from "./ConfigCenter.vue";
 import DebugConsole from "./DebugConsole.vue";
+import IntentRecognition from "./IntentRecognition.vue";
 import ModelManagement from "./ModelManagement.vue";
 
-type AdminRoute = "/debug" | "/observability" | "/config" | "/models" | "/status";
+type AdminRoute =
+  | "/intent"
+  | "/debug"
+  | "/observability"
+  | "/config"
+  | "/models"
+  | "/status";
 
 const navigation: { path: AdminRoute; label: string; group: string }[] = [
+  { path: "/intent", label: "意图识别", group: "运行调试" },
   { path: "/debug", label: "单条调试", group: "运行调试" },
   { path: "/observability", label: "调用观测", group: "运行调试" },
   { path: "/status", label: "服务状态", group: "运行调试" },
@@ -16,8 +24,8 @@ const navigation: { path: AdminRoute; label: string; group: string }[] = [
 ];
 
 function routeFromLocation(): AdminRoute {
-  const path = window.location.pathname.replace(/\/$/, "") || "/models";
-  return navigation.some((item) => item.path === path) ? (path as AdminRoute) : "/models";
+  const path = window.location.pathname.replace(/\/$/, "") || "/intent";
+  return navigation.some((item) => item.path === path) ? (path as AdminRoute) : "/intent";
 }
 
 const route = ref<AdminRoute>(routeFromLocation());
@@ -82,7 +90,8 @@ onBeforeUnmount(() => window.removeEventListener("popstate", syncRoute));
       </header>
 
       <section class="content-body">
-        <ModelManagement v-if="route === '/models'" />
+        <IntentRecognition v-if="route === '/intent'" @navigate="navigate" />
+        <ModelManagement v-else-if="route === '/models'" />
         <ConfigCenter v-else-if="route === '/config'" />
         <DebugConsole
           v-else

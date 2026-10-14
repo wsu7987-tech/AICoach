@@ -7,7 +7,14 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ConfigDraft, ConfigRelease, ModelConfig, RuntimeState
+from app.db.models import (
+    ConfigDraft,
+    ConfigRelease,
+    ManagedModel,
+    ModelConfig,
+    RuntimeModelState,
+    RuntimeState,
+)
 from app.schemas.config import (
     ConfigStatus,
     DraftPreview,
@@ -139,8 +146,18 @@ async def status_summary(request: Request, session: Session):
     ready = False
     if active_id:
         try:
-            configuration = await service.release_configuration(session, active_id)
-            ready = configuration["model_config_snapshot"]["enabled"]
+            await service.release_configuration(session, active_id)
+            model_state = await session.get(RuntimeModelState, 1)
+            managed_model = (
+                await session.get(ManagedModel, model_state.default_model_id)
+                if model_state is not None and model_state.default_model_id is not None
+                else None
+            )
+            ready = bool(
+                managed_model
+                and managed_model.enabled
+                and (managed_model.credential_id or managed_model.credential_ref)
+            )
         except service.ConfigError:
             pass
     active = None

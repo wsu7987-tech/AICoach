@@ -91,7 +91,9 @@ class DatabaseTraceStore:
             release_fingerprint=trace.release_fingerprint,
             effective_model_config_id=trace.model_config_id,
             model_config_hash=trace.model_config_hash,
-            model_config_snapshot_json=_json(trace.model_config_snapshot),
+            model_config_snapshot_json=_json(
+                trace.managed_model_snapshot or trace.model_config_snapshot
+            ),
             final_route=(trace.final_result or {}).get("route"),
             final_result_json=_json(trace.final_result),
             reason_summary=diagnostic_text(trace.reason_summary) if trace.reason_summary else None,
@@ -99,7 +101,14 @@ class DatabaseTraceStore:
             validation_json=_json(
                 {"issues": [item.model_dump(mode="json") for item in trace.validation_issues]}
             ),
-            timeline_json=_json({"attempt_count": len(attempts), "cancelled": trace.cancelled}),
+            timeline_json=_json(
+                {
+                    "attempt_count": len(attempts),
+                    "cancelled": trace.cancelled,
+                    "model_uid": (trace.managed_model_snapshot or {}).get("model_uid"),
+                    "failure_stage": trace.failure_stage,
+                }
+            ),
             latency_ms=round(sum(item.latency_ms for item in attempts)) if attempts else None,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
