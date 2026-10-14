@@ -29,7 +29,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 async function render() {
-  wrapper = mount(ConfigCenter, { global: { plugins: [ElementPlus] } });
+  wrapper = mount(ConfigCenter, {
+    props: { section: "routes" },
+    global: { plugins: [ElementPlus] },
+  });
   await flushPromises();
 }
 function button(label: string) {

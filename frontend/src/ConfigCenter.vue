@@ -8,14 +8,14 @@ import {
   type Draft,
   type DraftJson,
   type ModelConfig,
-  type ModelInput,
   type PublishSummary,
   type Release,
   type Route,
   type FieldIssue,
 } from "./configApi";
 
-const tab = ref("routes");
+defineProps<{ section?: string }>();
+
 const busy = ref(false);
 const loaded = ref(false);
 const dirty = ref(false);
@@ -48,20 +48,6 @@ const confirmVisible = ref(false);
 const note = ref("");
 const detail = ref<Release>();
 const detailVisible = ref(false);
-const paramsText = ref('{"temperature": 0}');
-const modelForm = reactive<ModelInput>({
-  name: "Qwen",
-  version: "1",
-  provider: "qwen",
-  model: "qwen-plus",
-  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-  params_json: {},
-  timeout_seconds: 30,
-  max_retries: 1,
-  max_concurrency: 4,
-  structured_output_mode: "json_object",
-  credential_ref: "DASHSCOPE_API_KEY",
-});
 const pretty = (value: unknown) => JSON.stringify(value, null, 2);
 
 async function run(action: () => Promise<void>) {
@@ -156,42 +142,6 @@ async function importBootstrap() {
     acceptDraft(await configApi.bootstrap(bootstrap as DraftJson));
     message.value =
       "Bootstrap 已导入 Draft，请确认业务配置后创建模型版本并发布";
-  });
-}
-async function createModel() {
-  await run(async () => {
-    let params: Record<string, unknown>;
-    try {
-      params = JSON.parse(paramsText.value);
-    } catch {
-      throw new Error("模型参数 JSON 格式错误");
-    }
-    const model = await configApi.createModel({
-      ...modelForm,
-      params_json: params,
-    });
-    await loadModels();
-    selectedModel.value = model.id;
-    message.value = `已创建 ${model.name} / ${model.version}`;
-  });
-}
-function copyModel(model: ModelConfig) {
-  for (const key of Object.keys(modelForm) as (keyof ModelInput)[])
-    Object.assign(modelForm, { [key]: model[key] });
-  modelForm.version = `${model.version}-next`;
-  paramsText.value = pretty(model.params_json);
-  message.value = "已复制参数，请填写新版本号后创建";
-}
-async function disableModel(model: ModelConfig) {
-  await run(async () => {
-    await ElMessageBox.confirm(
-      `禁用 ${model.name} / ${model.version}？历史记录会保留。`,
-      "禁用模型版本",
-    );
-    await configApi.disableModel(model.id);
-    await loadModels();
-    if (selectedModel.value === model.id) selectedModel.value = undefined;
-    message.value = "模型版本已禁用";
   });
 }
 async function preparePublish() {
@@ -310,9 +260,9 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
         dirty ? "未保存" : "Draft 已同步"
       }}</el-tag>
     </div>
-    <el-tabs v-model="tab">
-      <el-tab-pane label="Route" name="routes"
-        ><p>一级 Route 固定为以下七个且始终启用，可编辑中文名和描述。</p>
+    <div class="config-section">
+      <section v-if="section === 'routes'" class="config-editor">
+        <p>一级 Route 固定为以下七个且始终启用，可编辑中文名和描述。</p>
         <div v-for="route in routes" :key="route.name" class="route-row">
           <strong>{{ route.name }}</strong
           ><el-input
@@ -323,32 +273,28 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
             v-model="route.description"
             :aria-label="`${route.name} 描述`"
             @input="dirty = true"
-          /></div
-      ></el-tab-pane>
-      <el-tab-pane label="Intent" name="intents"
-        ><template v-if="draft.draft_json"
-          ><p>
+          />
+        </div>
+      </section>
+      <section v-else-if="section === 'intents'" class="config-editor">
+        <template v-if="draft.draft_json">
+          <p>
             编辑 name / zh / route / description / enabled /
             aliases。名称和别名必须在全部 Intent 中无歧义。
           </p>
-          <label for="intents-editor">Intents JSON</label
-          ><el-input
+          <label for="intents-editor">Intents JSON</label>
+          <el-input
             id="intents-editor"
             v-model="editors.intents"
             type="textarea"
             :rows="18"
-            @input="dirty = true" /><label for="examples-editor"
-            >Few-shot Examples JSON（text / route / intent / enabled）</label
-          ><el-input
-            id="examples-editor"
-            v-model="editors.examples"
-            type="textarea"
-            :rows="10"
-            @input="dirty = true" /></template
-      ></el-tab-pane>
-      <el-tab-pane label="Slot" name="slots"
-        ><template v-if="draft.draft_json"
-          ><p>
+            @input="dirty = true"
+          />
+        </template>
+      </section>
+      <section v-else-if="section === 'slots'" class="config-editor">
+        <template v-if="draft.draft_json">
+          <p>
             枚举槽位指定 value_type=enum 和已有 enum_group；字符串槽位指定
             value_type=string。
           </p>
@@ -357,11 +303,13 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
             v-model="editors.slots"
             type="textarea"
             :rows="22"
-            @input="dirty = true" /></template
-      ></el-tab-pane>
-      <el-tab-pane label="Enum/Alias" name="enums"
-        ><template v-if="draft.draft_json"
-          ><p>
+            @input="dirty = true"
+          />
+        </template>
+      </section>
+      <section v-else-if="section === 'enums'" class="config-editor">
+        <template v-if="draft.draft_json">
+          <p>
             按枚举组编辑 canonical / display / aliases / enabled；Intent 别名在
             Intent 标签维护。
           </p>
@@ -370,113 +318,38 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
             v-model="editors.enums"
             type="textarea"
             :rows="22"
-            @input="dirty = true" /></template
-      ></el-tab-pane>
-      <el-tab-pane label="Prompt Template" name="prompt_template"
-        ><template v-if="draft.draft_json"
-          ><p>编辑 system 和 rules，预览完整 Prompt。</p>
+            @input="dirty = true"
+          />
+        </template>
+      </section>
+      <section v-else-if="section === 'examples'" class="config-editor">
+        <template v-if="draft.draft_json">
+          <p>维护用于区分 Route 和 Intent 边界的 Few-shot 示例。</p>
+          <label for="examples-editor"
+            >Examples JSON（text / route / intent / enabled）</label
+          >
+          <el-input
+            id="examples-editor"
+            v-model="editors.examples"
+            type="textarea"
+            :rows="22"
+            @input="dirty = true"
+          />
+        </template>
+      </section>
+      <section v-else-if="section === 'prompt'" class="config-editor">
+        <template v-if="draft.draft_json">
+          <p>编辑 system 和 rules，预览完整 Prompt。</p>
           <el-input
             aria-label="Prompt Template JSON"
             v-model="editors.prompt_template"
             type="textarea"
             :rows="22"
-            @input="dirty = true" /></template
-      ></el-tab-pane>
-      <el-tab-pane label="Model Config" name="models">
-        <p>
-          每次调整创建新版本。credential_ref 只填后端环境变量名，不能填写 API
-          Key。
-        </p>
-        <el-form
-          label-position="top"
-          class="model-form"
-          @submit.prevent="createModel"
-        >
-          <el-form-item label="名称"
-            ><el-input
-              v-model="modelForm.name"
-              aria-label="模型配置名称" /></el-form-item
-          ><el-form-item label="版本"
-            ><el-input v-model="modelForm.version" aria-label="模型配置版本"
-          /></el-form-item>
-          <el-form-item label="模型"
-            ><el-input
-              v-model="modelForm.model"
-              aria-label="模型名称" /></el-form-item
-          ><el-form-item label="Base URL"
-            ><el-input v-model="modelForm.base_url" aria-label="Base URL"
-          /></el-form-item>
-          <el-form-item label="Credential Ref"
-            ><el-input
-              v-model="modelForm.credential_ref"
-              aria-label="Credential Ref" /></el-form-item
-          ><el-form-item label="Structured Output"
-            ><el-select
-              v-model="modelForm.structured_output_mode"
-              aria-label="Structured Output"
-              ><el-option
-                label="json_schema (strict)"
-                value="json_schema" /><el-option
-                label="json_object"
-                value="json_object" /></el-select
-          ></el-form-item>
-          <el-form-item label="超时（秒）"
-            ><el-input-number
-              v-model="modelForm.timeout_seconds"
-              :min="0.1"
-              :step="0.1"
-              :max="600" /></el-form-item
-          ><el-form-item label="额外重试次数"
-            ><el-input-number
-              v-model="modelForm.max_retries"
-              :min="0"
-              :max="5" /></el-form-item
-          ><el-form-item label="并发上限"
-            ><el-input-number
-              v-model="modelForm.max_concurrency"
-              :min="1"
-              :max="256"
-          /></el-form-item>
-          <el-form-item label="调用参数 JSON" class="full-width"
-            ><el-input
-              aria-label="模型参数 JSON"
-              v-model="paramsText"
-              type="textarea"
-              :rows="3"
-            /><small
-              >支持 temperature / top_p / seed / presence_penalty /
-              frequency_penalty。max_tokens 仅可为空。</small
-            ></el-form-item
-          >
-          <el-button type="primary" native-type="submit" :disabled="busy"
-            >创建模型版本</el-button
-          >
-        </el-form>
-        <el-table :data="models" row-key="id"
-          ><el-table-column prop="id" label="ID" width="70" /><el-table-column
-            prop="name"
-            label="名称"
-          /><el-table-column prop="version" label="版本" /><el-table-column
-            prop="model"
-            label="模型"
-          /><el-table-column label="状态"
-            ><template #default="{ row }">{{
-              row.enabled ? "启用" : "禁用"
-            }}</template></el-table-column
-          ><el-table-column label="操作" width="230"
-            ><template #default="{ row }"
-              ><el-button @click="copyModel(row)" :disabled="busy"
-                >复制为新版本</el-button
-              ><el-button
-                @click="disableModel(row)"
-                :disabled="busy || !row.enabled"
-                >禁用</el-button
-              ></template
-            ></el-table-column
-          ></el-table
-        >
-      </el-tab-pane>
-      <el-tab-pane label="Release" name="releases">
+            @input="dirty = true"
+          />
+        </template>
+      </section>
+      <section v-else-if="section === 'releases'" class="config-editor">
         <p>
           Active Release：{{
             activeId ? `#${activeId}` : "尚未发布"
@@ -537,8 +410,8 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
             >下一页</el-button
           >
         </div>
-      </el-tab-pane>
-    </el-tabs>
+      </section>
+    </div>
     <el-dialog v-model="previewVisible" title="Prompt 预览" width="85%">
       <pre class="json-view">{{ preview }}</pre>
     </el-dialog>
