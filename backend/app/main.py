@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.admin.router import router as admin_router
-from app.api.runtime.router import router as runtime_router
+from app.api.runtime.router import router as runtime_router, v2_router as runtime_v2_router
 from app.core.errors import AppError, ErrorCode
 from app.core.logging import configure_logging
 from app.core.readiness import ReadinessChecker
@@ -217,6 +217,7 @@ def create_app(
         )
 
     app.include_router(runtime_router)
+    app.include_router(runtime_v2_router)
     app.include_router(admin_router)
     return app
 

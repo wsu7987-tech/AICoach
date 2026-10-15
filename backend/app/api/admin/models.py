@@ -36,6 +36,9 @@ async def verify_new_connection(body: ConnectionVerifyInput):
         body.base_url,
         body.api_key.get_secret_value(),
         body.timeout_seconds,
+        model_name=body.model_name,
+        temperature=body.temperature,
+        top_p=body.top_p,
     )
 
 

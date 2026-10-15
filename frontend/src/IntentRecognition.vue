@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { ElMessage } from "element-plus";
 
-import { analyzeIntent, IntentApiError, type IntentResult } from "./intentApi";
+import {
+  analyzeIntent,
+  getIntentLatencyAnalysis,
+  IntentApiError,
+  type IntentLatencyAnalysis,
+  type IntentResult,
+} from "./intentApi";
 import { modelApi, type ManagedModel } from "./modelApi";
 
 const emit = defineEmits<{
@@ -24,6 +31,13 @@ const riskLabels: Record<string, string> = {
   high: "高",
 };
 
+const compositionLabels: Record<IntentResult["composition"], string> = {
+  single: "单一动作",
+  parallel: "并行动作",
+  sequential: "顺序动作",
+  alternative: "候选动作",
+};
+
 const text = ref("");
 const models = ref<ManagedModel[]>([]);
 const defaultModelUid = ref<string | null>(null);
@@ -34,6 +48,10 @@ const error = ref("");
 const result = ref<IntentResult | null>(null);
 const elapsedMs = ref<number | null>(null);
 const resultModelLabel = ref("");
+const latencyAnalysis = ref<IntentLatencyAnalysis | null>(null);
+const latencyAnalysisLoading = ref(false);
+const latencyAnalysisError = ref("");
+const jsonCopied = ref(false);
 
 const enabledModels = computed(() =>
   models.value.filter((model) => model.enabled),
@@ -47,10 +65,70 @@ const canSubmit = computed(
   () =>
     Boolean(text.value.trim() && selectedModelUid.value) && !recognizing.value,
 );
+const providerLatencyMs = computed(
+  () => latencyAnalysis.value?.current.provider_latency_ms ?? null,
+);
+const applicationLatencyMs = computed(() => {
+  if (elapsedMs.value === null || providerLatencyMs.value === null) return null;
+  return Math.max(0, elapsedMs.value - providerLatencyMs.value);
+});
+const providerLatencyRatio = computed(() => {
+  if (!elapsedMs.value || providerLatencyMs.value === null) return 0;
+  return Math.min(100, Math.round((providerLatencyMs.value / elapsedMs.value) * 100));
+});
+const latencyVerdict = computed(() => {
+  const current = providerLatencyMs.value ?? elapsedMs.value;
+  const baseline = latencyAnalysis.value?.baseline;
+  if (current === null) {
+    return { label: "暂无数据", type: "info" as const, detail: "" };
+  }
+  if (
+    baseline &&
+    baseline.p50_ms !== null &&
+    baseline.p95_ms !== null &&
+    baseline.sample_size
+  ) {
+    if (current <= baseline.p50_ms) {
+      return {
+        label: "较快",
+        type: "success" as const,
+        detail: `快于该模型近期中位数 ${formatDuration(baseline.p50_ms)}`,
+      };
+    }
+    if (current <= baseline.p95_ms) {
+      return {
+        label: "正常波动",
+        type: "info" as const,
+        detail: `处于近期 P50～P95 区间（${baseline.sample_size} 个样本）`,
+      };
+    }
+    return {
+      label: "偏慢",
+      type: "warning" as const,
+      detail: `超过该模型近期 P95 ${formatDuration(baseline.p95_ms)}`,
+    };
+  }
+  if (current <= 3000) {
+    return { label: "较快", type: "success" as const, detail: "本次耗时不超过 3 秒" };
+  }
+  if (current <= 10000) {
+    return { label: "正常", type: "info" as const, detail: "暂无足够历史样本用于对比" };
+  }
+  return { label: "偏慢", type: "warning" as const, detail: "暂无足够历史样本用于对比" };
+});
+const resultJson = computed(() =>
+  result.value ? JSON.stringify(result.value, null, 2) : "",
+);
 
 function readableError(value: unknown): string {
   if (!(value instanceof IntentApiError)) {
     return value instanceof Error ? value.message : "识别失败，请稍后重试";
+  }
+  if (
+    value.code === "MODEL_OUTPUT_SCHEMA_ERROR" &&
+    value.message.startsWith("模型返回字段不符合要求")
+  ) {
+    return value.message;
   }
   const messages: Record<string, string> = {
     CONFIG_NOT_READY: "当前运行配置尚未准备好，请检查默认模型和业务配置。",
@@ -58,6 +136,8 @@ function readableError(value: unknown): string {
     SERVICE_BUSY: "模型服务当前繁忙，请稍后重试。",
     MODEL_TIMEOUT: "模型服务响应超时，请重试或检查模型超时设置。",
     MODEL_RATE_LIMIT: "模型服务请求过于频繁，请稍后重试。",
+    MODEL_AUTH_FAILED: "模型服务认证失败，请检查 API Key。",
+    MODEL_NOT_FOUND: "模型名称不存在或当前 API Key 无权调用，请重新配置模型。",
     MODEL_PROVIDER_ERROR:
       "模型服务调用失败，请检查 API 地址、API Key 和模型名称。",
     MODEL_OUTPUT_PARSE_ERROR: "模型没有返回可解析的识别结果，请重新识别。",
@@ -101,17 +181,34 @@ async function recognize() {
   result.value = null;
   elapsedMs.value = null;
   resultModelLabel.value = "";
+  latencyAnalysis.value = null;
+  latencyAnalysisError.value = "";
+  latencyAnalysisLoading.value = false;
+  jsonCopied.value = false;
   const started = performance.now();
   try {
     resultModelLabel.value = selectedModel.value
       ? `${selectedModel.value.display_name} · ${selectedModel.value.model_name}`
       : "";
-    result.value = await analyzeIntent({
+    const recognized = await analyzeIntent({
       text: text.value,
       context: {},
       model_uid: selectedModelUid.value,
     });
     elapsedMs.value = Math.round(performance.now() - started);
+    result.value = recognized;
+    recognizing.value = false;
+    latencyAnalysisLoading.value = true;
+    try {
+      latencyAnalysis.value = await getIntentLatencyAnalysis(
+        recognized.request_id,
+        selectedModelUid.value,
+      );
+    } catch {
+      latencyAnalysisError.value = "服务端耗时明细暂不可用，已保留端到端用时。";
+    } finally {
+      latencyAnalysisLoading.value = false;
+    }
   } catch (value) {
     error.value = readableError(value);
   } finally {
@@ -123,13 +220,31 @@ function confidence(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
+function formatDuration(value: number | null): string {
+  if (value === null) return "—";
+  return value >= 1000 ? `${(value / 1000).toFixed(2)} s` : `${value} ms`;
+}
+
+async function copyResultJson() {
+  if (!resultJson.value) return;
+  try {
+    await navigator.clipboard.writeText(resultJson.value);
+    jsonCopied.value = true;
+    window.setTimeout(() => {
+      jsonCopied.value = false;
+    }, 1600);
+  } catch {
+    ElMessage.error("复制失败，请手动选择 JSON 内容");
+  }
+}
+
 onMounted(() => void loadModels());
 </script>
 
 <template>
   <section class="intent-recognition">
     <div class="intent-intro">
-      <p>输入一句自然语言，使用已配置的模型识别一级路由、意图和参数。</p>
+      <p>输入一句自然语言，识别其中一个或多个可独立处理的动作、路由和参数。</p>
     </div>
 
     <div class="intent-layout">
@@ -239,7 +354,7 @@ onMounted(() => void loadModels());
         <div v-if="recognizing" class="result-state">
           <span class="intent-spinner" aria-hidden="true"></span>
           <strong>正在识别...</strong>
-          <span>模型正在分析 Route、Intent 和 Slot</span>
+          <span>模型正在拆分 Action，并分析 Route、Intent 和 Slot</span>
         </div>
 
         <div v-else-if="!result" class="result-state empty-result">
@@ -249,53 +364,77 @@ onMounted(() => void loadModels());
         </div>
 
         <div v-else class="result-content">
-          <section class="result-section route-section">
-            <h3>一级路由</h3>
-            <div class="route-value">
-              <strong>{{ routeLabels[result.route] ?? result.route }}</strong>
-              <code>{{ result.route }}</code>
+          <section class="result-section action-plan-summary">
+            <div>
+              <h3>动作计划</h3>
+              <strong>{{ result.actions.length }} 个动作</strong>
             </div>
+            <el-tag effect="plain">
+              {{ compositionLabels[result.composition] }}
+            </el-tag>
           </section>
 
-          <section class="result-section">
-            <h3>意图</h3>
-            <div v-if="result.intents.length" class="intent-list">
-              <div
-                v-for="candidate in result.intents"
-                :key="candidate.name"
-                class="intent-candidate"
+          <section class="result-section action-list-section">
+            <h3>分动作识别结果</h3>
+            <div class="action-list">
+              <article
+                v-for="action in result.actions"
+                :key="action.action_id"
+                class="action-card"
               >
-                <div class="candidate-label">
-                  <span
-                    ><strong>{{ candidate.zh }}</strong
-                    ><small>{{ candidate.name }}</small></span
-                  >
-                  <b>{{ confidence(candidate.confidence) }}</b>
+                <header class="action-card-header">
+                  <div>
+                    <span>动作 {{ action.order }}</span>
+                    <code>{{ action.action_id }}</code>
+                  </div>
+                  <el-tag size="small" effect="plain">
+                    {{ routeLabels[action.route] ?? action.route }}
+                  </el-tag>
+                </header>
+
+                <div class="action-route">
+                  <span>Route</span>
+                  <code>{{ action.route }}</code>
                 </div>
-                <el-progress
-                  :percentage="Math.round(candidate.confidence * 100)"
-                  :stroke-width="5"
-                  :show-text="false"
-                />
-              </div>
-            </div>
-            <p v-else class="empty-value">未识别到二级意图</p>
-          </section>
 
-          <section class="result-section">
-            <h3>识别参数</h3>
-            <dl v-if="result.slots.length" class="slot-list">
-              <div
-                v-for="(slot, index) in result.slots"
-                :key="`${slot.name}-${index}`"
-              >
-                <dt>
-                  {{ slot.zh }} <small>{{ slot.name }}</small>
-                </dt>
-                <dd>{{ slot.value }}</dd>
-              </div>
-            </dl>
-            <p v-else class="empty-value">未识别到参数</p>
+                <div v-if="action.intent" class="intent-candidate">
+                  <div class="candidate-label">
+                    <span>
+                      <strong>{{ action.intent.zh }}</strong>
+                      <small>{{ action.intent.name }}</small>
+                    </span>
+                    <b>{{ confidence(action.intent.confidence) }}</b>
+                  </div>
+                  <el-progress
+                    :percentage="Math.round(action.intent.confidence * 100)"
+                    :stroke-width="5"
+                    :show-text="false"
+                  />
+                </div>
+                <p v-else class="empty-value">该动作未识别到二级意图</p>
+
+                <div class="action-slots">
+                  <h4>参数</h4>
+                  <dl v-if="action.slots.length" class="slot-list">
+                    <div
+                      v-for="(slot, index) in action.slots"
+                      :key="`${action.action_id}-${slot.name}-${index}`"
+                    >
+                      <dt>{{ slot.zh }} <small>{{ slot.name }}</small></dt>
+                      <dd>{{ slot.value }}</dd>
+                    </div>
+                  </dl>
+                  <p v-else class="empty-value">无参数</p>
+                </div>
+
+                <div v-if="action.depends_on.length" class="action-dependencies">
+                  <span>依赖动作</span>
+                  <code v-for="dependency in action.depends_on" :key="dependency">
+                    {{ dependency }}
+                  </code>
+                </div>
+              </article>
+            </div>
           </section>
 
           <section class="result-section compact-result-row">
@@ -321,12 +460,91 @@ onMounted(() => void loadModels());
             </div>
           </section>
 
+          <section class="result-section latency-analysis-section">
+            <div class="latency-title-row">
+              <h3>识别用时分析</h3>
+              <el-tag :type="latencyVerdict.type" size="small" effect="plain">
+                {{ latencyVerdict.label }}
+              </el-tag>
+            </div>
+
+            <div class="latency-metrics">
+              <div>
+                <span>端到端用时</span>
+                <strong>{{ formatDuration(elapsedMs) }}</strong>
+                <small>浏览器发起请求至收到结果</small>
+              </div>
+              <div>
+                <span>模型调用</span>
+                <strong>{{ formatDuration(providerLatencyMs) }}</strong>
+                <small>服务端模型请求累计耗时</small>
+              </div>
+              <div>
+                <span>应用与网络</span>
+                <strong>{{ formatDuration(applicationLatencyMs) }}</strong>
+                <small>传输、配置、校验及持久化</small>
+              </div>
+              <div>
+                <span>近期平均</span>
+                <strong>{{ formatDuration(latencyAnalysis?.baseline.average_ms ?? null) }}</strong>
+                <small>
+                  同模型最近 {{ latencyAnalysis?.baseline.sample_size ?? 0 }} 个成功样本
+                </small>
+              </div>
+            </div>
+
+            <div v-if="latencyAnalysisLoading" class="latency-loading">
+              正在读取服务端耗时明细…
+            </div>
+            <template v-else>
+              <div
+                v-if="providerLatencyMs !== null && elapsedMs !== null"
+                class="latency-breakdown"
+              >
+                <div class="latency-breakdown-labels">
+                  <span>模型调用 {{ providerLatencyRatio }}%</span>
+                  <span>应用与网络 {{ 100 - providerLatencyRatio }}%</span>
+                </div>
+                <div class="latency-bar" aria-label="识别耗时构成">
+                  <span :style="{ width: `${providerLatencyRatio}%` }"></span>
+                </div>
+              </div>
+              <p class="latency-verdict-detail">{{ latencyVerdict.detail }}</p>
+              <div v-if="latencyAnalysis" class="latency-meta">
+                <span>调用 {{ latencyAnalysis.current.attempt_count }} 次</span>
+                <span>重试 {{ latencyAnalysis.current.retry_count }} 次</span>
+                <span>
+                  Token {{ latencyAnalysis.current.total_tokens ?? "—" }}
+                </span>
+                <span>
+                  P95 {{ formatDuration(latencyAnalysis.baseline.p95_ms) }}
+                </span>
+              </div>
+              <p v-if="latencyAnalysisError" class="latency-analysis-error">
+                {{ latencyAnalysisError }}
+              </p>
+            </template>
+          </section>
+
           <section
             v-if="result.need_clarification"
             class="result-section clarification"
           >
             <h3>需要补充信息</h3>
             <p>{{ result.clarification }}</p>
+          </section>
+
+          <section class="result-section json-output-section">
+            <div class="json-output-heading">
+              <div>
+                <h3>JSON 输出</h3>
+                <p>每个意图都在 actions 数组中独立成项，可直接交给下游编排。</p>
+              </div>
+              <el-button size="small" plain @click="copyResultJson">
+                {{ jsonCopied ? "已复制" : "复制 JSON" }}
+              </el-button>
+            </div>
+            <pre><code>{{ resultJson }}</code></pre>
           </section>
         </div>
       </section>

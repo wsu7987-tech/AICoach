@@ -4,9 +4,10 @@ from fastapi import APIRouter, Request
 from pydantic import ValidationError
 
 from app.core.errors import AppError, ErrorCode
-from app.schemas.intent import IntentAnalyzeRequest, IntentResult
+from app.schemas.intent import IntentAnalyzeRequest, IntentResult, IntentResultV2
 
 router = APIRouter(prefix="/api/v1", tags=["runtime"])
+v2_router = APIRouter(prefix="/api/v2", tags=["runtime"])
 
 
 @router.get("/", summary="Runtime API boundary")
@@ -19,6 +20,40 @@ async def runtime_boundary() -> dict[str, str]:
 @router.post("/intent/analyze", response_model=IntentResult)
 async def analyze_intent(request: Request) -> IntentResult:
     """The stable public Runtime endpoint; all diagnostics remain in Trace."""
+
+    parsed = await _parse_request(request)
+    service = getattr(request.app.state, "intent_service", None)
+    if service is None:
+        raise AppError(ErrorCode.CONFIG_NOT_READY, "runtime configuration is not ready", 503)
+    return await service.analyze(
+        text=parsed.text,
+        context=parsed.context,
+        request_id=parsed.request_id or request.state.request_id,
+        model_uid=parsed.model_uid,
+        execution_mode="runtime",
+    )
+
+
+@v2_router.post("/intent/analyze", response_model=IntentResultV2)
+async def analyze_intent_v2(request: Request) -> IntentResultV2:
+    """Return an action plan that supports cross-route compound intents."""
+
+    parsed = await _parse_request(request)
+    service = getattr(request.app.state, "intent_service", None)
+    if service is None:
+        raise AppError(ErrorCode.CONFIG_NOT_READY, "runtime configuration is not ready", 503)
+    return await service.analyze(
+        text=parsed.text,
+        context=parsed.context,
+        request_id=parsed.request_id or request.state.request_id,
+        model_uid=parsed.model_uid,
+        output_version=2,
+        execution_mode="runtime",
+    )
+
+
+async def _parse_request(request: Request) -> IntentAnalyzeRequest:
+    """Apply the same bounded input contract to every Runtime API version."""
 
     settings = request.app.state.settings
     content_length = request.headers.get("content-length")
@@ -41,13 +76,4 @@ async def analyze_intent(request: Request) -> IntentResult:
     context_bytes = len(json.dumps(parsed.context, ensure_ascii=False).encode("utf-8"))
     if context_bytes > settings.max_context_bytes:
         raise AppError(ErrorCode.INVALID_INPUT, "context exceeds MAX_CONTEXT_BYTES", 422)
-    service = getattr(request.app.state, "intent_service", None)
-    if service is None:
-        raise AppError(ErrorCode.CONFIG_NOT_READY, "runtime configuration is not ready", 503)
-    return await service.analyze(
-        text=parsed.text,
-        context=parsed.context,
-        request_id=parsed.request_id or request.state.request_id,
-        model_uid=parsed.model_uid,
-        execution_mode="runtime",
-    )
+    return parsed

@@ -268,6 +268,83 @@ async def list_traces(sessions: async_sessionmaker, filters: dict[str, Any]) -> 
     }
 
 
+def _percentile(values: list[int], ratio: float) -> int | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, round((len(ordered) - 1) * ratio)))
+    return ordered[index]
+
+
+async def intent_latency_analysis(
+    sessions: async_sessionmaker,
+    *,
+    request_id: str,
+    model_uid: str,
+    sample_size: int,
+) -> dict[str, Any]:
+    """Return safe timing diagnostics for one Runtime request and its model baseline."""
+
+    async with sessions() as session:
+        current = await session.scalar(
+            select(IntentRequestTrace)
+            .where(
+                IntentRequestTrace.request_id == request_id,
+                IntentRequestTrace.source == "runtime",
+            )
+            .order_by(IntentRequestTrace.created_at.desc(), IntentRequestTrace.id.desc())
+            .limit(1)
+        )
+        if current is None:
+            raise config_service.ConfigError("TRACE_NOT_FOUND", "本次识别耗时记录不可用", 404)
+
+        candidates = list(
+            (
+                await session.scalars(
+                    select(IntentRequestTrace)
+                    .where(
+                        IntentRequestTrace.source == "runtime",
+                        IntentRequestTrace.status == "success",
+                        IntentRequestTrace.latency_ms.is_not(None),
+                        IntentRequestTrace.id != current.id,
+                    )
+                    .order_by(IntentRequestTrace.created_at.desc())
+                    .limit(max(200, sample_size * 10))
+                )
+            ).all()
+        )
+
+    matching = [
+        row
+        for row in candidates
+        if (row.model_config_snapshot_json or {}).get("model_uid") == model_uid
+    ][:sample_size]
+    values = [int(row.latency_ms) for row in matching if row.latency_ms is not None]
+    average = round(sum(values) / len(values)) if values else None
+    timeline = current.timeline_json or {}
+    return {
+        "request_id": current.request_id,
+        "trace_id": current.trace_id,
+        "model_uid": model_uid,
+        "current": {
+            "provider_latency_ms": current.latency_ms,
+            "attempt_count": int(timeline.get("attempt_count") or 0),
+            "retry_count": current.retry_count,
+            "input_tokens": current.input_tokens,
+            "output_tokens": current.output_tokens,
+            "total_tokens": current.total_tokens,
+        },
+        "baseline": {
+            "sample_size": len(values),
+            "average_ms": average,
+            "p50_ms": _percentile(values, 0.5),
+            "p95_ms": _percentile(values, 0.95),
+            "min_ms": min(values) if values else None,
+            "max_ms": max(values) if values else None,
+        },
+    }
+
+
 def diff(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
     fields = {
         "input": (left["input"], right["input"]),

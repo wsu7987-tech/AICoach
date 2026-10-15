@@ -20,7 +20,12 @@ from app.providers.types import (
     diagnostic_attempts,
 )
 from app.schemas.managed_model import ManagedModelRuntimeSnapshot
-from app.schemas.intent import LLMStructuredIntentOutput, ModelConfigSnapshot, PromptBuildResult
+from app.schemas.intent import (
+    LLMStructuredIntentOutput,
+    LLMStructuredIntentOutputV2,
+    ModelConfigSnapshot,
+    PromptBuildResult,
+)
 
 ProviderConfigSnapshot = ModelConfigSnapshot | ManagedModelRuntimeSnapshot
 
@@ -174,20 +179,27 @@ class OpenAICompatibleProvider:
             "model": self.model_config.model,
             "messages": [message.model_dump(mode="json") for message in prompt.messages],
             **params,
-            "response_format": self._response_format(),
+            "response_format": self._response_format(prompt),
         }
         request.pop("max_tokens", None)
         return request
 
-    def _response_format(self) -> dict[str, Any]:
+    def _response_format(self, prompt: PromptBuildResult) -> dict[str, Any]:
         if self.model_config.structured_output_mode == "json_object":
             return {"type": "json_object"}
-        schema = LLMStructuredIntentOutput.model_json_schema()
+        schema_name = prompt.metadata.get("output_schema_name")
+        output_model = (
+            LLMStructuredIntentOutputV2
+            if schema_name == LLMStructuredIntentOutputV2.__name__
+            else LLMStructuredIntentOutput
+        )
+        schema = output_model.model_json_schema()
+        schema_name = output_model.__name__
         self._validate_json_schema(schema)
         return {
             "type": "json_schema",
             "json_schema": {
-                "name": LLMStructuredIntentOutput.__name__,
+                "name": schema_name,
                 "strict": True,
                 "schema": schema,
             },
@@ -258,6 +270,12 @@ class OpenAICompatibleProvider:
             return ErrorCode.MODEL_TIMEOUT, 504, True
         if isinstance(exc, openai.RateLimitError):
             return ErrorCode.MODEL_RATE_LIMIT, 503, True
+        if isinstance(exc, openai.AuthenticationError):
+            return ErrorCode.MODEL_AUTH_FAILED, 502, False
+        if isinstance(exc, openai.NotFoundError):
+            body = exc.body if isinstance(exc.body, dict) else {}
+            if body.get("code") == "model_not_found":
+                return ErrorCode.MODEL_NOT_FOUND, 502, False
         if isinstance(exc, openai.InternalServerError):
             return ErrorCode.MODEL_PROVIDER_ERROR, 502, True
         if isinstance(exc, openai.APIConnectionError):

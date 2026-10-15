@@ -149,6 +149,132 @@ class LLMStructuredIntentOutput(ContractModel):
         return self
 
 
+type IntentComposition = Literal["single", "parallel", "sequential", "alternative"]
+
+
+class IntentAction(ContractModel):
+    """One independently routable action in the V2 runtime result."""
+
+    action_id: str = Field(pattern=r"^action_[1-9][0-9]*$")
+    route: RouteKey
+    intent: IntentCandidate | None
+    slots: list[SlotValue] = Field(default_factory=list)
+    order: int = Field(ge=1)
+    depends_on: list[str] = Field(default_factory=list)
+
+
+class IntentResultV2(ContractModel):
+    """Compound-aware public result. Debug-only reasoning remains in Trace."""
+
+    schema_version: Literal[2] = 2
+    request_id: str = Field(min_length=1, max_length=128)
+    text: str = Field(min_length=1)
+    is_compound: bool
+    composition: IntentComposition
+    actions: list[IntentAction]
+    risk: RiskInfo | None
+    need_clarification: bool
+    clarification: str | None = None
+
+    @model_validator(mode="after")
+    def valid_compound_runtime_invariants(self) -> IntentResultV2:
+        _validate_action_plan(
+            self.actions,
+            is_compound=self.is_compound,
+            composition=self.composition,
+            need_clarification=self.need_clarification,
+        )
+        _validate_clarification(
+            "compound", self.need_clarification, self.clarification
+        )
+        return self
+
+
+class LLMIntentAction(ContractModel):
+    """One action emitted by the model before business normalization."""
+
+    action_id: str = Field(pattern=r"^action_[1-9][0-9]*$")
+    route: RouteKey
+    intent: IntentCandidate | None
+    slots: list[SlotValue] = Field(default_factory=list)
+    order: int = Field(ge=1)
+    depends_on: list[str] = Field(default_factory=list)
+
+
+class LLMStructuredIntentOutputV2(ContractModel):
+    """Strict compound-aware model output, with trace-only diagnostics."""
+
+    schema_version: Literal[2] = 2
+    is_compound: bool
+    composition: IntentComposition
+    actions: list[LLMIntentAction]
+    risk: RiskInfo | None
+    need_clarification: bool
+    clarification: str | None = None
+    reason_summary: str | None = None
+    evidence: list[EvidenceItem] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def valid_compound_llm_invariants(self) -> LLMStructuredIntentOutputV2:
+        _validate_action_plan(
+            self.actions,
+            is_compound=self.is_compound,
+            composition=self.composition,
+            need_clarification=self.need_clarification,
+        )
+        _validate_clarification(
+            "compound", self.need_clarification, self.clarification
+        )
+        return self
+
+
+def _validate_action_plan(
+    actions: list[IntentAction] | list[LLMIntentAction],
+    *,
+    is_compound: bool,
+    composition: IntentComposition,
+    need_clarification: bool,
+) -> None:
+    if not actions:
+        raise ValueError("actions must contain at least one action")
+    expected_compound = len(actions) > 1
+    if is_compound != expected_compound:
+        raise ValueError("is_compound must match whether actions contains multiple items")
+    if (composition == "single") != (len(actions) == 1):
+        raise ValueError("single composition must contain exactly one action")
+
+    action_ids = [action.action_id for action in actions]
+    _ensure_unique(action_ids, "action ids")
+    orders = [action.order for action in actions]
+    _ensure_unique(orders, "action orders")
+    if sorted(orders) != list(range(1, len(actions) + 1)):
+        raise ValueError("action orders must be contiguous and start at 1")
+
+    known_ids = set(action_ids)
+    action_order = {action.action_id: action.order for action in actions}
+    for action in actions:
+        if len(action.depends_on) != len(set(action.depends_on)):
+            raise ValueError(f"action {action.action_id} contains duplicate dependencies")
+        for dependency in action.depends_on:
+            if dependency not in known_ids:
+                raise ValueError(f"action {action.action_id} references an unknown dependency")
+            if action_order[dependency] >= action.order:
+                raise ValueError(
+                    f"action {action.action_id} must depend only on an earlier action"
+                )
+
+    if composition in {"single", "parallel", "alternative"} and any(
+        action.depends_on for action in actions
+    ):
+        raise ValueError(f"{composition} composition cannot declare dependencies")
+    if composition == "sequential" and any(
+        not action.depends_on for action in actions if action.order > 1
+    ):
+        raise ValueError("every sequential action after the first must declare a dependency")
+    if composition == "alternative" and not need_clarification:
+        raise ValueError("alternative composition requires clarification")
+
+
 class RouteDefinition(ContractModel):
     name: RouteKey = Field(min_length=1)
     zh: str = Field(min_length=1)
@@ -362,6 +488,11 @@ class ValidatedIntentOutput(ContractModel):
     validation_issues: list[OutputValidationIssue] = Field(default_factory=list)
 
 
+class ValidatedIntentOutputV2(ContractModel):
+    result: IntentResultV2
+    validation_issues: list[OutputValidationIssue] = Field(default_factory=list)
+
+
 class BusinessOutputValidationError(ValueError):
     """A schema-valid model output contradicts the current business snapshot."""
 
@@ -447,6 +578,64 @@ def validate_llm_output(
             risk=output.risk,
             need_clarification=normalized_need_clarification,
             clarification=normalized_clarification,
+        ),
+        validation_issues=issues,
+    )
+
+
+def validate_llm_output_v2(
+    output: LLMStructuredIntentOutputV2,
+    snapshot: RuntimeConfigSnapshot,
+    *,
+    request_id: str,
+    text: str,
+) -> ValidatedIntentOutputV2:
+    """Validate and normalize every action without imposing an action-count limit."""
+
+    actions: list[IntentAction] = []
+    issues: list[OutputValidationIssue] = []
+    for action in sorted(output.actions, key=lambda item: item.order):
+        candidate_intents = [action.intent] if action.intent is not None else []
+        validated = validate_llm_output(
+            LLMStructuredIntentOutput(
+                route=action.route,
+                intents=candidate_intents,
+                slots=action.slots,
+                risk=None,
+                need_clarification=False,
+                clarification=None,
+                reason_summary=None,
+                evidence=[],
+            ),
+            snapshot,
+            request_id=request_id,
+            text=text,
+        )
+        normalized_intent = (
+            validated.result.intents[0] if validated.result.intents else None
+        )
+        actions.append(
+            IntentAction(
+                action_id=action.action_id,
+                route=validated.result.route,
+                intent=normalized_intent,
+                slots=validated.result.slots,
+                order=action.order,
+                depends_on=action.depends_on,
+            )
+        )
+        issues.extend(validated.validation_issues)
+
+    return ValidatedIntentOutputV2(
+        result=IntentResultV2(
+            request_id=request_id,
+            text=text,
+            is_compound=output.is_compound,
+            composition=output.composition,
+            actions=actions,
+            risk=output.risk,
+            need_clarification=output.need_clarification,
+            clarification=output.clarification,
         ),
         validation_issues=issues,
     )

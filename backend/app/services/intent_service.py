@@ -26,11 +26,14 @@ from app.schemas.intent import (
     BusinessOutputValidationError,
     IntentAnalyzeRequest,
     IntentResult,
+    IntentResultV2,
     LLMStructuredIntentOutput,
+    LLMStructuredIntentOutputV2,
     ModelConfigSnapshot,
     OutputValidationIssue,
     RuntimeConfigSnapshot,
     validate_llm_output,
+    validate_llm_output_v2,
 )
 from app.services.runtime_model import ResolvedManagedModel
 
@@ -232,9 +235,10 @@ class IntentService:
         context: dict[str, Any] | None = None,
         request_id: str | None = None,
         model_uid: str | None = None,
+        output_version: Literal[1, 2] = 1,
         execution_mode: Literal["runtime", "debug", "replay", "evaluation"] = "runtime",
         parent_trace_id: str | None = None,
-    ) -> IntentResult:
+    ) -> IntentResult | IntentResultV2:
         request = IntentAnalyzeRequest(
             request_id=request_id,
             text=text,
@@ -291,17 +295,31 @@ class IntentService:
                     else self._provider
                 )
                 verify_provider(provider, config.model_config_snapshot)
-            prompt = self._prompt_builder.build(config.snapshot, request.text, request.context)
+            prompt = self._prompt_builder.build(
+                config.snapshot,
+                request.text,
+                request.context,
+                output_version=output_version,
+            )
             trace.prompt = prompt.model_dump(mode="json")
             response = await provider.invoke(prompt)
             trace.attempts = response.attempts
-            output = self._parse_output(response.content, response.attempts)
-            validated = validate_llm_output(
-                output,
-                config.snapshot,
-                request_id=effective_request_id,
-                text=request.text,
-            )
+            if output_version == 2:
+                output = self._parse_output_v2(response.content, response.attempts)
+                validated = validate_llm_output_v2(
+                    output,
+                    config.snapshot,
+                    request_id=effective_request_id,
+                    text=request.text,
+                )
+            else:
+                output = self._parse_output(response.content, response.attempts)
+                validated = validate_llm_output(
+                    output,
+                    config.snapshot,
+                    request_id=effective_request_id,
+                    text=request.text,
+                )
             trace.validation_issues = validated.validation_issues
             trace.final_result = validated.result.model_dump(mode="json")
             trace.reason_summary = output.reason_summary
@@ -373,10 +391,37 @@ class IntentService:
             )
         try:
             return LLMStructuredIntentOutput.model_validate(payload)
-        except ValidationError:
+        except ValidationError as exc:
             raise IntentServiceError(
                 ErrorCode.MODEL_OUTPUT_SCHEMA_ERROR,
-                "model output does not conform to LLMStructuredIntentOutput",
+                _schema_error_message(exc),
+                attempts=attempts,
+            ) from None
+
+    @staticmethod
+    def _parse_output_v2(
+        content: str, attempts: list[LLMAttempt]
+    ) -> LLMStructuredIntentOutputV2:
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            raise IntentServiceError(
+                ErrorCode.MODEL_OUTPUT_PARSE_ERROR,
+                "model output is not valid JSON",
+                attempts=attempts,
+            ) from None
+        if not isinstance(payload, dict):
+            raise IntentServiceError(
+                ErrorCode.MODEL_OUTPUT_SCHEMA_ERROR,
+                "model output must be a JSON object",
+                attempts=attempts,
+            )
+        try:
+            return LLMStructuredIntentOutputV2.model_validate(payload)
+        except ValidationError as exc:
+            raise IntentServiceError(
+                ErrorCode.MODEL_OUTPUT_SCHEMA_ERROR,
+                _schema_error_message(exc),
                 attempts=attempts,
             ) from None
 
@@ -432,3 +477,25 @@ class IntentService:
             logger.warning("TRACE_PERSIST_FAILED trace_id=%s", trace.trace_id)
             if not fail_open:
                 raise AppError(ErrorCode.INTERNAL_ERROR, "trace persistence failed", 500) from None
+
+
+def _schema_error_message(exc: ValidationError) -> str:
+    """Expose field-level contract failures without echoing model content."""
+
+    descriptions: list[str] = []
+    labels = {
+        "missing": "缺失",
+        "extra_forbidden": "不允许出现",
+        "list_type": "应为数组",
+        "dict_type": "应为对象",
+        "model_type": "应为对象",
+        "string_type": "应为字符串",
+        "float_type": "应为数字",
+        "bool_type": "应为布尔值",
+    }
+    for issue in exc.errors(include_url=False, include_context=False, include_input=False)[:6]:
+        location = ".".join(str(part) for part in issue["loc"]) or "根对象"
+        description = labels.get(issue["type"], "格式错误")
+        descriptions.append(f"{location} {description}")
+    detail = "；".join(descriptions) if descriptions else "字段结构错误"
+    return f"模型返回字段不符合要求：{detail}"

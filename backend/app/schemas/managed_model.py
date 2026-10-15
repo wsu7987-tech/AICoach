@@ -91,12 +91,25 @@ class ConnectionVerifyInput(BaseModel):
 
     base_url: str = Field(min_length=1, max_length=2048)
     api_key: SecretStr = Field(min_length=1, max_length=4096)
+    model_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+        pattern=r"^[A-Za-z0-9._:/-]+$",
+    )
+    temperature: float | None = Field(default=0.1, ge=0, le=2)
+    top_p: float | None = Field(default=0.8, gt=0, le=1)
     timeout_seconds: float = Field(default=15, gt=0, le=60)
 
     @field_validator("base_url")
     @classmethod
     def normalize_endpoint(cls, value: str) -> str:
         return normalized_base_url(value)
+
+    @field_validator("model_name")
+    @classmethod
+    def trim_model_name(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
 
 
 class ExistingConnectionVerifyInput(BaseModel):
@@ -109,6 +122,8 @@ class ConnectionVerifyResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     connected: Literal[True]
+    model_verified: bool
+    verified_model_name: str | None = None
     model_discovery_supported: bool
     models: list[str]
     message: str

@@ -76,6 +76,22 @@ async def trace_detail(trace_id: str, request: Request):
     return await debug_service.trace_detail(sessions, trace_id)
 
 
+@router.get("/intent/latency-analysis")
+async def intent_latency_analysis(
+    request: Request,
+    request_id: str = Query(min_length=1, max_length=128),
+    model_uid: str = Query(pattern=r"^mdl_[a-f0-9]{64}$"),
+    sample_size: int = Query(default=20, ge=5, le=100),
+):
+    sessions, _ = _components(request)
+    return await debug_service.intent_latency_analysis(
+        sessions,
+        request_id=request_id,
+        model_uid=model_uid,
+        sample_size=sample_size,
+    )
+
+
 @router.post("/traces/{trace_id}/replay")
 async def replay(trace_id: str, body: ReplayInput, request: Request, session: Session):
     sessions, factory = _components(request)

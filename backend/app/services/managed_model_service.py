@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
 import httpx
 import openai
 from openai import AsyncOpenAI
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ManagedModel, ProviderCredential, RuntimeModelState
+from app.schemas.intent import LLMStructuredIntentOutputV2
 from app.schemas.managed_model import (
     ConnectionVerifyResult,
     ManagedModelCreate,
@@ -249,7 +252,13 @@ def decrypt_model_credential(cipher: CredentialCipher, credential: ProviderCrede
 
 
 async def verify_connection(
-    base_url: str, api_key: str, timeout_seconds: float
+    base_url: str,
+    api_key: str,
+    timeout_seconds: float,
+    *,
+    model_name: str | None = None,
+    temperature: float | None = 0.1,
+    top_p: float | None = 0.8,
 ) -> ConnectionVerifyResult:
     http_client = httpx.AsyncClient(trust_env=False)
     client = AsyncOpenAI(
@@ -259,15 +268,92 @@ async def verify_connection(
         max_retries=0,
         http_client=http_client,
     )
+    models: list[str] = []
+    discovery_supported = True
     try:
-        page = await client.models.list()
-        models = sorted({item.id for item in page.data if item.id})
+        try:
+            page = await client.models.list()
+            models = sorted({item.id for item in page.data if item.id})
+        except openai.APIStatusError as exc:
+            if exc.status_code not in {404, 405}:
+                raise
+            discovery_supported = False
+
+        if model_name is None:
+            message = (
+                "连接成功，请选择模型后再次验证模型调用"
+                if discovery_supported
+                else "已连接，但服务不支持获取模型列表；填写模型名称后需再次验证"
+            )
+            return ConnectionVerifyResult(
+                connected=True,
+                model_verified=False,
+                verified_model_name=None,
+                model_discovery_supported=discovery_supported,
+                models=models,
+                message=message,
+            )
+
+        expected = {
+            "schema_version": 2,
+            "is_compound": False,
+            "composition": "single",
+            "actions": [
+                {
+                    "action_id": "action_1",
+                    "route": "unknown",
+                    "intent": None,
+                    "slots": [],
+                    "order": 1,
+                    "depends_on": [],
+                }
+            ],
+            "risk": None,
+            "need_clarification": False,
+            "clarification": None,
+            "reason_summary": "connection verification",
+            "evidence": [],
+        }
+        params: dict[str, float] = {}
+        if temperature is not None:
+            params["temperature"] = temperature
+        if top_p is not None:
+            params["top_p"] = top_p
+        completion = await client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Return exactly one JSON object and no explanation. "
+                        "Copy the object supplied by the user without changing field names."
+                    ),
+                },
+                {"role": "user", "content": json.dumps(expected, ensure_ascii=False)},
+            ],
+            response_format={"type": "json_object"},
+            **params,
+        )
+        content = completion.choices[0].message.content or ""
+        try:
+            LLMStructuredIntentOutputV2.model_validate(json.loads(content))
+        except (json.JSONDecodeError, ValidationError, TypeError):
+            raise ConfigError(
+                "MODEL_OUTPUT_FORMAT_UNSUPPORTED",
+                "模型可以调用，但不能稳定返回意图识别所需的 JSON 字段格式",
+                422,
+            ) from None
+
         return ConnectionVerifyResult(
             connected=True,
-            model_discovery_supported=True,
+            model_verified=True,
+            verified_model_name=model_name,
+            model_discovery_supported=discovery_supported,
             models=models,
-            message="连接成功",
+            message="连接及模型调用验证成功",
         )
+    except ConfigError:
+        raise
     except openai.AuthenticationError as exc:
         raise ConfigError("PROVIDER_AUTH_FAILED", "认证失败，请检查 API Key", 401) from exc
     except openai.APITimeoutError as exc:
@@ -277,16 +363,20 @@ async def verify_connection(
     except openai.RateLimitError as exc:
         raise ConfigError("PROVIDER_RATE_LIMIT", "模型服务请求过于频繁，请稍后重试", 429) from exc
     except openai.APIStatusError as exc:
-        if exc.status_code in {404, 405}:
-            return ConnectionVerifyResult(
-                connected=True,
-                model_discovery_supported=False,
-                models=[],
-                message="已连接，但服务不支持获取模型列表，请手动填写模型名称",
-            )
+        body = exc.body if isinstance(exc.body, dict) else {}
+        if exc.status_code == 404 or body.get("code") == "model_not_found":
+            raise ConfigError(
+                "MODEL_NOT_FOUND",
+                f"模型名称 {model_name or ''} 不存在或当前 API Key 无权调用",
+                422,
+            ) from exc
         if exc.status_code >= 500:
             raise ConfigError("PROVIDER_SERVER_ERROR", "模型服务暂时不可用", 502) from exc
-        raise ConfigError("PROVIDER_VERIFY_FAILED", "模型服务拒绝了连接验证", 400) from exc
+        raise ConfigError(
+            "PROVIDER_VERIFY_FAILED",
+            f"模型服务拒绝了模型调用验证（HTTP {exc.status_code}）",
+            400,
+        ) from exc
     finally:
         await client.close()
 
@@ -311,8 +401,15 @@ async def verify_existing(
         )
     else:
         raise ConfigError("CREDENTIAL_NOT_FOUND", "模型尚未配置 API Key", 409)
-    result = await verify_connection(row.base_url, api_key, min(row.timeout_seconds, 60))
-    if credential is not None and replacement_api_key is None:
+    result = await verify_connection(
+        row.base_url,
+        api_key,
+        min(row.timeout_seconds, 60),
+        model_name=row.model_name,
+        temperature=row.params_json.get("temperature"),
+        top_p=row.params_json.get("top_p"),
+    )
+    if result.model_verified and credential is not None and replacement_api_key is None:
         credential.last_verified_at = _utc_now()
         credential.updated_at = _utc_now()
     return result

@@ -56,6 +56,8 @@ export interface ModelUpdateInput {
 
 export interface VerifyResult {
   connected: true;
+  model_verified: boolean;
+  verified_model_name: string | null;
   model_discovery_supported: boolean;
   models: string[];
   message: string;
@@ -87,11 +89,21 @@ export const modelApi = {
     request<ManagedModel>("/models", "POST", body),
   update: (modelUid: string, body: ModelUpdateInput) =>
     request<ManagedModel>(`/models/${modelUid}`, "PATCH", body),
-  verifyNew: (baseUrl: string, apiKey: string, timeoutSeconds: number) =>
+  verifyNew: (
+    baseUrl: string,
+    apiKey: string,
+    timeoutSeconds: number,
+    modelName?: string,
+    temperature?: number,
+    topP?: number,
+  ) =>
     request<VerifyResult>("/models/verify", "POST", {
       base_url: baseUrl,
       api_key: apiKey,
       timeout_seconds: Math.min(timeoutSeconds, 60),
+      ...(modelName ? { model_name: modelName } : {}),
+      ...(temperature === undefined ? {} : { temperature }),
+      ...(topP === undefined ? {} : { top_p: topP }),
     }),
   verifyExisting: (modelUid: string, apiKey?: string) =>
     request<VerifyResult>(`/models/${modelUid}/verify`, "POST", {

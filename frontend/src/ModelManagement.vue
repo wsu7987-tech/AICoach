@@ -86,6 +86,12 @@ function resetVerification() {
   availableModels.value = [];
 }
 
+function invalidateModelVerification() {
+  verified.value = false;
+  verifyMessage.value = "模型名称或参数已变化，请重新验证模型调用";
+  verifyError.value = "";
+}
+
 function assignDefaults() {
   Object.assign(form, {
     display_name: "",
@@ -167,12 +173,19 @@ async function verify() {
             form.base_url,
             form.api_key,
             form.timeout_seconds,
+            form.model_name || undefined,
+            form.temperature,
+            form.top_p,
           );
     availableModels.value = result.models;
-    verified.value = true;
+    verified.value = result.model_verified;
     verifyMessage.value = result.message;
+    if (result.verified_model_name) {
+      form.model_name = result.verified_model_name;
+    }
     if (!form.model_name && result.models.length === 1) {
       form.model_name = result.models[0];
+      verifyMessage.value = `${result.message}；已发现唯一模型，请再次验证模型调用`;
     }
   } catch (value) {
     const message = readableError(value);
@@ -444,6 +457,7 @@ onMounted(() => void loadModels());
             default-first-option
             :disabled="identityLocked"
             placeholder="验证后选择，或手动输入模型名称"
+            @change="invalidateModelVerification"
           >
             <el-option
               v-for="name in availableModels"
@@ -460,10 +474,22 @@ onMounted(() => void loadModels());
         <h4>常用参数</h4>
         <div class="parameter-grid">
           <el-form-item label="Temperature">
-            <el-input-number v-model="form.temperature" :min="0" :max="2" :step="0.1" />
+            <el-input-number
+              v-model="form.temperature"
+              :min="0"
+              :max="2"
+              :step="0.1"
+              @change="invalidateModelVerification"
+            />
           </el-form-item>
           <el-form-item label="Top P">
-            <el-input-number v-model="form.top_p" :min="0.01" :max="1" :step="0.05" />
+            <el-input-number
+              v-model="form.top_p"
+              :min="0.01"
+              :max="1"
+              :step="0.05"
+              @change="invalidateModelVerification"
+            />
           </el-form-item>
         </div>
 
