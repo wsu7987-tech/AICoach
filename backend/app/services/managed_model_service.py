@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -20,6 +21,8 @@ from app.schemas.managed_model import (
     ManagedModelCreate,
     ManagedModelUpdate,
     ManagedModelView,
+    ModelServiceTestInput,
+    ModelServiceTestResult,
 )
 from app.security.credentials import (
     CredentialCipher,
@@ -407,3 +410,139 @@ async def verify_existing(
         credential.last_verified_at = _utc_now()
         credential.updated_at = _utc_now()
     return result
+
+
+def _intent_candidates(answer: str) -> list[str]:
+    """Extract common intent/route values without imposing one output schema."""
+
+    candidates: list[str] = []
+
+    def add(value: object) -> None:
+        if isinstance(value, str):
+            text = value.strip()
+            if text and text not in candidates:
+                candidates.append(text)
+        elif isinstance(value, dict):
+            for key in ("name", "zh", "intent", "route", "label"):
+                add(value.get(key))
+        elif isinstance(value, list):
+            for item in value:
+                add(item)
+
+    try:
+        payload = json.loads(answer)
+    except (json.JSONDecodeError, TypeError):
+        payload = None
+
+    if isinstance(payload, dict):
+        for key in ("intent", "intents", "route", "label"):
+            add(payload.get(key))
+        actions = payload.get("actions")
+        if isinstance(actions, list):
+            for action in actions:
+                if isinstance(action, dict):
+                    add(action.get("intent"))
+                    add(action.get("route"))
+    elif isinstance(payload, str):
+        add(payload)
+    elif "\n" not in answer and len(answer.strip()) <= 256:
+        # A frequent custom-prompt contract is to return only one intent label.
+        add(answer.strip().strip("`\"'"))
+    return candidates
+
+
+def _normalized_intent(value: str) -> str:
+    return "".join(value.casefold().split())
+
+
+async def test_model_service(
+    session: AsyncSession,
+    model_uid: str,
+    body: ModelServiceTestInput,
+    cipher: CredentialCipher,
+) -> ModelServiceTestResult:
+    """Run an isolated free-form model test without creating Runtime traces."""
+
+    total_started = time.perf_counter()
+    row = await _get_row(session, model_uid)
+    if not row.enabled:
+        raise ConfigError("MODEL_DISABLED", "已禁用的模型不能执行服务测试", 409)
+    credential = await _credential(session, row)
+    if credential is None:
+        raise ConfigError("CREDENTIAL_NOT_FOUND", "模型尚未配置 API Key", 409)
+    api_key = decrypt_model_credential(cipher, credential)
+
+    http_client = httpx.AsyncClient(trust_env=False)
+    client = AsyncOpenAI(
+        api_key=api_key,
+        base_url=row.base_url,
+        timeout=row.timeout_seconds,
+        max_retries=row.max_retries,
+        http_client=http_client,
+    )
+    provider_started = time.perf_counter()
+    try:
+        completion = await client.chat.completions.create(
+            model=row.model_name,
+            messages=[
+                {"role": "system", "content": body.system_prompt},
+                {"role": "user", "content": body.question},
+            ],
+            **dict(row.params_json),
+        )
+        provider_latency_ms = round(
+            (time.perf_counter() - provider_started) * 1000, 3
+        )
+        choice = completion.choices[0]
+        answer = choice.message.content or ""
+        candidates = _intent_candidates(answer)
+        reference_match = None
+        if body.reference_intent is not None and candidates:
+            expected = _normalized_intent(body.reference_intent)
+            reference_match = any(
+                _normalized_intent(candidate) == expected for candidate in candidates
+            )
+        total_latency_ms = round((time.perf_counter() - total_started) * 1000, 3)
+        usage = completion.usage
+        return ModelServiceTestResult(
+            model_name=row.model_name,
+            answer=answer,
+            reference_intent=body.reference_intent,
+            recognized_intents=candidates,
+            reference_match=reference_match,
+            total_latency_ms=total_latency_ms,
+            provider_latency_ms=provider_latency_ms,
+            application_latency_ms=round(
+                max(0, total_latency_ms - provider_latency_ms), 3
+            ),
+            input_tokens=usage.prompt_tokens if usage is not None else None,
+            output_tokens=usage.completion_tokens if usage is not None else None,
+            total_tokens=usage.total_tokens if usage is not None else None,
+            finish_reason=choice.finish_reason,
+        )
+    except openai.AuthenticationError as exc:
+        raise ConfigError("PROVIDER_AUTH_FAILED", "认证失败，请检查 API Key", 401) from exc
+    except openai.APITimeoutError as exc:
+        raise ConfigError("PROVIDER_TIMEOUT", "模型服务响应超时", 504) from exc
+    except openai.APIConnectionError as exc:
+        raise ConfigError("PROVIDER_CONNECTION_FAILED", "无法连接模型服务", 502) from exc
+    except openai.RateLimitError as exc:
+        raise ConfigError(
+            "PROVIDER_RATE_LIMIT", "模型服务请求过于频繁，请稍后重试", 429
+        ) from exc
+    except openai.APIStatusError as exc:
+        if exc.status_code == 404:
+            raise ConfigError(
+                "MODEL_NOT_FOUND",
+                f"模型名称 {row.model_name} 不存在或当前 API Key 无权调用",
+                422,
+            ) from exc
+        if exc.status_code >= 500:
+            raise ConfigError("PROVIDER_SERVER_ERROR", "模型服务暂时不可用", 502) from exc
+        raise ConfigError(
+            "PROVIDER_TEST_FAILED",
+            f"模型服务拒绝了测试请求（HTTP {exc.status_code}）",
+            400,
+        ) from exc
+    finally:
+        await client.close()

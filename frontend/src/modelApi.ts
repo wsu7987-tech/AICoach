@@ -63,6 +63,27 @@ export interface VerifyResult {
   message: string;
 }
 
+export interface ModelServiceTestInput {
+  system_prompt: string;
+  question: string;
+  reference_intent?: string;
+}
+
+export interface ModelServiceTestResult {
+  model_name: string;
+  answer: string;
+  reference_intent: string | null;
+  recognized_intents: string[];
+  reference_match: boolean | null;
+  total_latency_ms: number;
+  provider_latency_ms: number;
+  application_latency_ms: number;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  finish_reason: string | null;
+}
+
 async function request<T>(
   path: string,
   method = "GET",
@@ -109,6 +130,12 @@ export const modelApi = {
     request<VerifyResult>(`/models/${modelUid}/verify`, "POST", {
       ...(apiKey ? { api_key: apiKey } : {}),
     }),
+  testService: (modelUid: string, body: ModelServiceTestInput) =>
+    request<ModelServiceTestResult>(
+      `/models/${modelUid}/service-test`,
+      "POST",
+      body,
+    ),
   setDefault: (modelUid: string) =>
     request<ManagedModel>(`/models/${modelUid}/default`, "POST"),
   enable: (modelUid: string) =>

@@ -9,6 +9,8 @@ from app.schemas.managed_model import (
     ManagedModelList,
     ManagedModelUpdate,
     ManagedModelView,
+    ModelServiceTestInput,
+    ModelServiceTestResult,
 )
 from app.security.credentials import CredentialCipher
 from app.services import managed_model_service as service
@@ -70,6 +72,21 @@ async def verify_existing_connection(
         model_uid,
         _cipher(request),
         replacement,
+    )
+
+
+@router.post("/{model_uid}/service-test", response_model=ModelServiceTestResult)
+async def test_model_service(
+    model_uid: str,
+    body: ModelServiceTestInput,
+    request: Request,
+    session: Session,
+):
+    return await service.test_model_service(
+        session,
+        model_uid,
+        body,
+        _cipher(request),
     )
 
 

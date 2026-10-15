@@ -129,6 +129,41 @@ class ConnectionVerifyResult(BaseModel):
     message: str
 
 
+class ModelServiceTestInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    system_prompt: str = Field(min_length=1, max_length=8000, pattern=r"\S")
+    question: str = Field(min_length=1, max_length=4000, pattern=r"\S")
+    reference_intent: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+        pattern=r"\S",
+    )
+
+    @field_validator("system_prompt", "question", "reference_intent")
+    @classmethod
+    def trim_test_text(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
+
+
+class ModelServiceTestResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    model_name: str
+    answer: str
+    reference_intent: str | None
+    recognized_intents: list[str]
+    reference_match: bool | None
+    total_latency_ms: float = Field(ge=0)
+    provider_latency_ms: float = Field(ge=0)
+    application_latency_ms: float = Field(ge=0)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
+    finish_reason: str | None = None
+
+
 class ManagedModelView(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, from_attributes=True)
 

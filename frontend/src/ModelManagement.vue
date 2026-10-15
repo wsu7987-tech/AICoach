@@ -6,6 +6,7 @@ import {
   modelApi,
   type ManagedModel,
   type ModelCreateInput,
+  type ModelServiceTestResult,
   type ModelUpdateInput,
 } from "./modelApi";
 
@@ -25,6 +26,19 @@ const verified = ref(false);
 const verifyMessage = ref("");
 const verifyError = ref("");
 const availableModels = ref<string[]>([]);
+const serviceTestVisible = ref(false);
+const serviceTesting = ref(false);
+const serviceTestModel = ref<ManagedModel | null>(null);
+const serviceTestError = ref("");
+const serviceTestResult = ref<ModelServiceTestResult | null>(null);
+const serviceTestElapsedMs = ref<number | null>(null);
+
+const serviceTestForm = reactive({
+  system_prompt:
+    "你是意图识别助手。请根据用户问句，只返回最匹配的意图名称，不要补充解释。",
+  question: "",
+  reference_intent: "",
+});
 
 const form = reactive<ModelCreateInput>({
   display_name: "",
@@ -61,6 +75,23 @@ const canSave = computed(() => {
   if (mode.value !== "edit") return Boolean(form.api_key.trim() && verified.value);
   if (replaceCredential.value) return Boolean(form.api_key.trim() && verified.value);
   return true;
+});
+const canRunServiceTest = computed(
+  () =>
+    Boolean(
+      serviceTestModel.value?.enabled &&
+        serviceTestForm.system_prompt.trim() &&
+        serviceTestForm.question.trim(),
+    ) && !serviceTesting.value,
+);
+const clientOverheadMs = computed(() => {
+  if (serviceTestElapsedMs.value === null || !serviceTestResult.value) {
+    return null;
+  }
+  return Math.max(
+    0,
+    serviceTestElapsedMs.value - serviceTestResult.value.total_latency_ms,
+  );
 });
 
 function readableError(value: unknown): string {
@@ -241,6 +272,50 @@ async function testSaved(model: ManagedModel) {
   }
 }
 
+function openServiceTest(model: ManagedModel) {
+  serviceTestModel.value = model;
+  serviceTestForm.question = "";
+  serviceTestForm.reference_intent = "";
+  serviceTestError.value = "";
+  serviceTestResult.value = null;
+  serviceTestElapsedMs.value = null;
+  serviceTestVisible.value = true;
+}
+
+async function runServiceTest() {
+  if (!canRunServiceTest.value || !serviceTestModel.value) return;
+  serviceTesting.value = true;
+  serviceTestError.value = "";
+  serviceTestResult.value = null;
+  serviceTestElapsedMs.value = null;
+  const started = performance.now();
+  try {
+    serviceTestResult.value = await modelApi.testService(
+      serviceTestModel.value.model_uid,
+      {
+        system_prompt: serviceTestForm.system_prompt.trim(),
+        question: serviceTestForm.question.trim(),
+        ...(serviceTestForm.reference_intent.trim()
+          ? { reference_intent: serviceTestForm.reference_intent.trim() }
+          : {}),
+      },
+    );
+    serviceTestElapsedMs.value = Math.round(performance.now() - started);
+  } catch (value) {
+    serviceTestElapsedMs.value = Math.round(performance.now() - started);
+    serviceTestError.value = readableError(value);
+  } finally {
+    serviceTesting.value = false;
+  }
+}
+
+function formatDuration(value: number | null): string {
+  if (value === null) return "—";
+  return value >= 1000
+    ? `${(value / 1000).toFixed(2)} s`
+    : `${Math.round(value)} ms`;
+}
+
 async function setDefault(model: ManagedModel) {
   if (loading.value) return;
   loading.value = true;
@@ -344,8 +419,13 @@ onMounted(() => void loadModels());
         </dl>
 
         <div class="model-actions">
-          <el-button :loading="verifying" @click="testSaved(model)">
-            测试连接
+          <el-button
+            type="primary"
+            plain
+            :disabled="!model.enabled"
+            @click="openServiceTest(model)"
+          >
+            服务测试
           </el-button>
           <el-button @click="openEdit(model)">编辑</el-button>
           <el-button
@@ -359,6 +439,12 @@ onMounted(() => void loadModels());
             <el-button>更多</el-button>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item
+                  :disabled="verifying"
+                  @click="testSaved(model)"
+                >
+                  测试连接
+                </el-dropdown-item>
                 <el-dropdown-item @click="openCopy(model)">
                   基于此模型创建新模型
                 </el-dropdown-item>
@@ -520,6 +606,161 @@ onMounted(() => void loadModels());
             {{ mode === "edit" ? "保存修改" : "保存模型" }}
           </el-button>
         </div>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="serviceTestVisible"
+      class="service-test-dialog"
+      :title="`模型服务测试 · ${serviceTestModel?.display_name ?? ''}`"
+      width="min(860px, 94vw)"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <div class="service-test-layout">
+        <el-form
+          label-position="top"
+          class="service-test-form"
+          @submit.prevent="runServiceTest"
+        >
+          <el-form-item label="自定义提示词" required>
+            <el-input
+              v-model="serviceTestForm.system_prompt"
+              type="textarea"
+              :rows="5"
+              maxlength="8000"
+              show-word-limit
+              resize="vertical"
+              :disabled="serviceTesting"
+              placeholder="输入发送给模型的 System Prompt"
+            />
+          </el-form-item>
+          <el-form-item label="问句" required>
+            <el-input
+              v-model="serviceTestForm.question"
+              type="textarea"
+              :rows="4"
+              maxlength="4000"
+              show-word-limit
+              resize="vertical"
+              :disabled="serviceTesting"
+              placeholder="例如：我想制定一个减脂训练计划"
+              @keydown.ctrl.enter="runServiceTest"
+            />
+          </el-form-item>
+          <el-form-item label="参考意图（可选）">
+            <el-input
+              v-model="serviceTestForm.reference_intent"
+              maxlength="256"
+              :disabled="serviceTesting"
+              placeholder="例如：start_training；仅用于结果对照，不会发送给模型"
+            />
+          </el-form-item>
+          <div class="service-test-submit">
+            <span>Ctrl + Enter 快速测试</span>
+            <el-button
+              type="primary"
+              :loading="serviceTesting"
+              :disabled="!canRunServiceTest"
+              @click="runServiceTest"
+            >
+              {{ serviceTesting ? "正在识别..." : "开始测试" }}
+            </el-button>
+          </div>
+        </el-form>
+
+        <section class="service-test-output" aria-live="polite">
+          <el-alert
+            v-if="serviceTestError"
+            :title="serviceTestError"
+            type="error"
+            show-icon
+            :closable="false"
+          />
+          <div v-else-if="serviceTesting" class="service-test-empty">
+            模型正在回答并分析用时…
+          </div>
+          <div v-else-if="!serviceTestResult" class="service-test-empty">
+            测试完成后，这里会显示模型回答、参考意图对照和耗时分析。
+          </div>
+          <template v-else>
+            <div class="service-test-result-heading">
+              <h3>模型回答</h3>
+              <el-tag type="success" effect="plain">调用完成</el-tag>
+            </div>
+            <pre class="service-test-answer">{{
+              serviceTestResult.answer || "（模型返回了空回答）"
+            }}</pre>
+
+            <section
+              v-if="serviceTestResult.reference_intent"
+              class="reference-intent-result"
+            >
+              <div class="service-test-result-heading">
+                <h3>参考意图对照</h3>
+                <el-tag
+                  v-if="serviceTestResult.reference_match !== null"
+                  :type="serviceTestResult.reference_match ? 'success' : 'warning'"
+                  effect="plain"
+                >
+                  {{ serviceTestResult.reference_match ? "一致" : "不一致" }}
+                </el-tag>
+                <el-tag v-else type="info" effect="plain">无法自动判断</el-tag>
+              </div>
+              <dl class="reference-intent-grid">
+                <div>
+                  <dt>参考意图</dt>
+                  <dd>{{ serviceTestResult.reference_intent }}</dd>
+                </div>
+                <div>
+                  <dt>回答中提取</dt>
+                  <dd>
+                    {{
+                      serviceTestResult.recognized_intents.join("、") ||
+                      "未提取到结构化意图"
+                    }}
+                  </dd>
+                </div>
+              </dl>
+            </section>
+
+            <section class="service-test-latency">
+              <h3>完成识别用时分析</h3>
+              <div class="service-test-metrics">
+                <div>
+                  <span>端到端用时</span>
+                  <strong>{{ formatDuration(serviceTestElapsedMs) }}</strong>
+                  <small>浏览器发送至收到回答</small>
+                </div>
+                <div>
+                  <span>模型调用</span>
+                  <strong>{{ formatDuration(serviceTestResult.provider_latency_ms) }}</strong>
+                  <small>模型服务响应耗时</small>
+                </div>
+                <div>
+                  <span>后端处理</span>
+                  <strong>{{ formatDuration(serviceTestResult.application_latency_ms) }}</strong>
+                  <small>读取配置、凭据与结果分析</small>
+                </div>
+                <div>
+                  <span>网络与前端</span>
+                  <strong>{{ formatDuration(clientOverheadMs) }}</strong>
+                  <small>传输及浏览器处理</small>
+                </div>
+              </div>
+              <div class="service-test-meta">
+                <span>输入 Token {{ serviceTestResult.input_tokens ?? "—" }}</span>
+                <span>输出 Token {{ serviceTestResult.output_tokens ?? "—" }}</span>
+                <span>总 Token {{ serviceTestResult.total_tokens ?? "—" }}</span>
+                <span>结束原因 {{ serviceTestResult.finish_reason ?? "—" }}</span>
+              </div>
+            </section>
+          </template>
+        </section>
+      </div>
+
+      <template #footer>
+        <el-button @click="serviceTestVisible = false">关闭</el-button>
       </template>
     </el-dialog>
   </section>
