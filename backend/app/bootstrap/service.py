@@ -10,18 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ConfigDraft
 
-ROUTE_CONTRACT = frozenset(
-    {
-        "training_business",
-        "information_query",
-        "sports_knowledge",
-        "safety",
-        "dialogue_device_control",
-        "social_chat",
-        "unknown",
-    }
-)
-
 
 class BootstrapValidationError(ValueError):
     """The file cannot be accepted as a business configuration draft."""
@@ -54,18 +42,15 @@ class BootstrapPayload(BaseModel):
     @model_validator(mode="after")
     def validate_route_contract(self) -> BootstrapPayload:
         route_names: list[str] = []
-        disabled: list[str] = []
         for route in self.routes:
             name = route.get("name")
-            if not isinstance(name, str):
-                raise ValueError("every route requires a string name")
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("every route requires a non-empty string name")
             route_names.append(name)
-            if route.get("enabled") is not True:
-                disabled.append(name)
-        if set(route_names) != ROUTE_CONTRACT or len(route_names) != len(ROUTE_CONTRACT):
-            raise ValueError("routes must contain exactly the seven fixed Route Contract keys")
-        if disabled:
-            raise ValueError("all fixed Route Contract keys must be enabled")
+        if not route_names:
+            raise ValueError("at least one route is required")
+        if len(route_names) != len(set(route_names)):
+            raise ValueError("route names must be unique")
         return self
 
     def canonical_json(self) -> str:

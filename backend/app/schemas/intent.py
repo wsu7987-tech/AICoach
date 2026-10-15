@@ -13,28 +13,7 @@ from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-RouteKey = Literal[
-    "training_business",
-    "information_query",
-    "sports_knowledge",
-    "safety",
-    "dialogue_device_control",
-    "social_chat",
-    "unknown",
-]
-
-FIXED_ROUTE_KEYS: tuple[RouteKey, ...] = (
-    "training_business",
-    "information_query",
-    "sports_knowledge",
-    "safety",
-    "dialogue_device_control",
-    "social_chat",
-    "unknown",
-)
-FIXED_ROUTE_KEY_SET = frozenset(FIXED_ROUTE_KEYS)
-# Kept as a named constant for callers that need a set-style membership check.
-ROUTE_CONTRACT = FIXED_ROUTE_KEY_SET
+type RouteKey = str
 
 
 def canonical_json(value: object) -> str:
@@ -171,7 +150,7 @@ class LLMStructuredIntentOutput(ContractModel):
 
 
 class RouteDefinition(ContractModel):
-    name: RouteKey
+    name: RouteKey = Field(min_length=1)
     zh: str = Field(min_length=1)
     description: str = Field(min_length=1)
     enabled: bool
@@ -180,7 +159,7 @@ class RouteDefinition(ContractModel):
 class IntentDefinition(ContractModel):
     name: str = Field(min_length=1)
     zh: str = Field(min_length=1)
-    route: RouteKey
+    route: RouteKey = Field(min_length=1)
     description: str = Field(min_length=1)
     enabled: bool
     aliases: list[str] = Field(default_factory=list)
@@ -227,7 +206,7 @@ class EnumValueDefinition(ContractModel):
 
 class ExampleDefinition(ContractModel):
     text: str = Field(min_length=1)
-    route: RouteKey
+    route: RouteKey = Field(min_length=1)
     intent: str | None = Field(default=None, min_length=1)
     enabled: bool = True
 
@@ -248,7 +227,7 @@ class RuntimeConfigSnapshot(ContractModel):
     """The complete, immutable business configuration consumed at runtime."""
 
     schema_version: Literal[1]
-    routes: list[RouteDefinition]
+    routes: list[RouteDefinition] = Field(min_length=1)
     intents: list[IntentDefinition]
     slots: list[SlotDefinition]
     enums: dict[str, list[EnumValueDefinition]]
@@ -258,10 +237,7 @@ class RuntimeConfigSnapshot(ContractModel):
     @model_validator(mode="after")
     def valid_business_config(self) -> RuntimeConfigSnapshot:
         route_names = [route.name for route in self.routes]
-        if set(route_names) != FIXED_ROUTE_KEY_SET or len(route_names) != len(FIXED_ROUTE_KEYS):
-            raise ValueError("routes must contain exactly the seven fixed Route Contract keys")
-        if any(not route.enabled for route in self.routes):
-            raise ValueError("all fixed Route Contract routes must be enabled")
+        _ensure_unique(route_names, "route names")
 
         _ensure_unique([item.name for item in self.intents], "intent names")
         names: dict[str, str] = {}
@@ -285,7 +261,13 @@ class RuntimeConfigSnapshot(ContractModel):
                 raise ValueError(f"slot {slot.name} references an unknown enum_group")
 
         intents_by_name = {item.name: item for item in self.intents}
+        route_name_set = set(route_names)
+        for intent in self.intents:
+            if intent.route not in route_name_set:
+                raise ValueError(f"intent {intent.name} references unknown route {intent.route}")
         for example in self.examples:
+            if example.route not in route_name_set:
+                raise ValueError(f"example references unknown route {example.route}")
             if example.intent is None:
                 continue
             intent = intents_by_name.get(example.intent)
@@ -399,6 +381,9 @@ def validate_llm_output(
     """
 
     config = validate_runtime_config_snapshot(snapshot)
+    active_route_names = {item.name for item in config.routes if item.enabled}
+    if output.route not in active_route_names:
+        raise BusinessOutputValidationError(f"route {output.route} is not enabled")
     intent_by_name = {item.name: item for item in config.active_intents}
     normalized_intents: list[IntentCandidate] = []
     for candidate in output.intents:

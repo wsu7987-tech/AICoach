@@ -1,8 +1,6 @@
 """Pydantic API schemas."""
 
 from app.schemas.intent import (
-    FIXED_ROUTE_KEYS,
-    ROUTE_CONTRACT,
     EvidenceItem,
     IntentAnalyzeRequest,
     IntentCandidate,
@@ -17,8 +15,6 @@ from app.schemas.intent import (
 )
 
 __all__ = [
-    "FIXED_ROUTE_KEYS",
-    "ROUTE_CONTRACT",
     "EvidenceItem",
     "IntentAnalyzeRequest",
     "IntentCandidate",

@@ -199,20 +199,31 @@ def test_clarification_and_training_business_invariants(
         )
 
 
-@pytest.mark.parametrize("mutation", ["missing", "extra", "disabled"])
-def test_snapshot_rejects_any_fixed_route_contract_change(mutation: str) -> None:
+def test_snapshot_accepts_configured_route_addition() -> None:
     document = json.loads(BOOTSTRAP_PATH.read_text(encoding="utf-8"))
-    if mutation == "missing":
-        document["routes"].pop()
-    elif mutation == "extra":
-        document["routes"].append(
-            {"name": "new_route", "zh": "新路由", "description": "no", "enabled": True}
-        )
-    else:
-        document["routes"][0]["enabled"] = False
+    document["routes"].append(
+        {
+            "name": "customer_service",
+            "zh": "客户服务",
+            "description": "客户服务请求",
+            "enabled": True,
+        }
+    )
+    document["intents"].append(
+        {
+            "name": "contact_support",
+            "zh": "联系支持",
+            "route": "customer_service",
+            "description": "用户希望联系客服",
+            "enabled": True,
+            "aliases": [],
+        }
+    )
 
-    with pytest.raises(ValidationError):
-        RuntimeConfigSnapshot.model_validate(document)
+    snapshot = RuntimeConfigSnapshot.model_validate(document)
+
+    assert snapshot.routes[-1].name == "customer_service"
+    assert snapshot.intents[-1].route == "customer_service"
 
 
 def test_secondary_intent_must_be_enabled_and_belong_to_output_route(
@@ -341,34 +352,50 @@ def test_snapshot_validation_reconstructs_instances_before_returning_them(
     assert validated is not snapshot
     assert validated == snapshot
 
-    snapshot.routes[0].enabled = False
-    with pytest.raises(ValidationError, match="all fixed Route Contract routes must be enabled"):
+    snapshot.routes.clear()
+    with pytest.raises(ValidationError):
         validate_runtime_config_snapshot(snapshot)
 
 
 def test_snapshot_validation_rejects_mutated_missing_route_and_invalid_dict(
     snapshot: RuntimeConfigSnapshot,
 ) -> None:
-    snapshot.routes.pop()
-    with pytest.raises(ValidationError, match="seven fixed Route Contract"):
+    snapshot.routes.clear()
+    with pytest.raises(ValidationError):
         validate_runtime_config_snapshot(snapshot)
 
     invalid_document = snapshot.model_dump(mode="json")
     invalid_document["routes"] = []
-    with pytest.raises(ValidationError, match="seven fixed Route Contract"):
+    with pytest.raises(ValidationError):
         validate_runtime_config_snapshot(invalid_document)
 
 
-@pytest.mark.parametrize("mutation", ["disabled", "extra", "invalid_intent_route"])
+@pytest.mark.parametrize("mutation", ["duplicate", "invalid_intent_route"])
 def test_snapshot_validation_rejects_other_post_construction_mutations(
     snapshot: RuntimeConfigSnapshot, mutation: str
 ) -> None:
-    if mutation == "disabled":
-        snapshot.routes[0].enabled = False
-    elif mutation == "extra":
+    if mutation == "duplicate":
         snapshot.routes.append(snapshot.routes[0].model_copy())
     else:
         snapshot.intents[0].route = "not_a_route"  # type: ignore[assignment]
 
     with pytest.raises(ValidationError):
         validate_runtime_config_snapshot(snapshot)
+
+
+def test_output_rejects_a_disabled_or_unconfigured_route(
+    snapshot: RuntimeConfigSnapshot,
+) -> None:
+    snapshot.routes[0].enabled = False
+    disabled = LLMStructuredIntentOutput(
+        route=snapshot.routes[0].name,
+        intents=[],
+        risk=None,
+        need_clarification=False,
+    )
+    missing = disabled.model_copy(update={"route": "not_configured"})
+
+    with pytest.raises(BusinessOutputValidationError, match="not enabled"):
+        validate_llm_output(disabled, snapshot, request_id="req_1", text="你好")
+    with pytest.raises(BusinessOutputValidationError, match="not enabled"):
+        validate_llm_output(missing, snapshot, request_id="req_1", text="你好")

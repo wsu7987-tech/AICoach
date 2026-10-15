@@ -454,7 +454,7 @@
   "prompt_template": {
     "system": "你是 AI Coach 的意图路由器。只根据当前已发布配置识别用户文本的业务路由、意图、槽位、风险与是否需要澄清。不得执行下游业务。训练业务只需要正确识别一级 route；训练业务缺参追问由现有规则系统处理。安全类一期仍由模型识别。",
     "rules": [
-      "route 必须是固定一级 Route Contract 中的 key；配置只维护描述/二级 Intent 等内容",
+      "route 必须是当前 Route 配置中存在且已启用的 key",
       "可输出多个 intents，但需按置信度排序",
       "slot start/end 使用 UTF-16 code-unit offset，区间为 [start,end)",
       "无法可靠分类时使用 unknown",

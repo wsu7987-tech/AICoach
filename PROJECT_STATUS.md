@@ -16,6 +16,7 @@
 | TASK-401 生产部署与主系统接入 | ⬜ | |
 | TASK-501 自动化测试与E2E验收 | ⬜ | |
 | vNext Step 1 模型管理重构 | 🚧 修正完成，待定向测试 | 已移除用户侧 Provider/Qwen 限制，改为 Base URL + API Key + Model Name 的通用 OpenAI-compatible 接入；尚未执行本轮修正后的定向测试。 |
+| Route/Intent 配置中心优化 | ✅ | Route 支持新增/编辑；Intent 改为按 Route 分组的主从编辑器，支持典型说法与 Prompt 配置片段预览；详见 `docs/Route与Intent配置中心实施说明.md`。 |
 
 ## 待确认事项
 

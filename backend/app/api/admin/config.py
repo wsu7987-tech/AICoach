@@ -22,6 +22,8 @@ from app.schemas.config import (
     DraftValidation,
     DraftView,
     ModelConfigCreate,
+    PromptModulePreview,
+    PromptModulePreviewResult,
     PublishedRelease,
     PublishInput,
     PublishSummary,
@@ -75,6 +77,15 @@ async def validate_draft(session: Session):
 @router.post("/config/prompt-preview", response_model=PromptBuildResult)
 async def preview_prompt(body: DraftPreview, session: Session):
     return await service.preview_prompt(session, body.text, body.context)
+
+
+@router.post("/config/prompt-preview/module", response_model=PromptModulePreviewResult)
+async def preview_prompt_module(body: PromptModulePreview, session: Session):
+    return await service.preview_prompt_module(
+        session,
+        module=body.module,
+        intent_name=body.intent_name,
+    )
 
 
 @router.get("/model-configs", response_model=list[ModelConfigSnapshot])

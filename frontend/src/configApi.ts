@@ -17,13 +17,28 @@ export interface Route {
   description: string;
   enabled: boolean;
 }
+export interface Intent {
+  name: string;
+  zh: string;
+  route: string;
+  description: string;
+  enabled: boolean;
+  aliases: string[];
+  mapping_note?: string | null;
+}
+export interface Example {
+  text: string;
+  route: string;
+  intent?: string | null;
+  enabled?: boolean;
+}
 export interface DraftJson {
   schema_version: number;
   routes: Route[];
-  intents: unknown[];
+  intents: Intent[];
   slots: unknown[];
   enums: Record<string, unknown>;
-  examples: unknown[];
+  examples: Example[];
   prompt_template: Record<string, unknown>;
 }
 export interface Draft {
@@ -105,6 +120,15 @@ export const configApi = {
       "/config/prompt-preview",
       "POST",
       { text },
+    ),
+  previewModule: (
+    module: "routes" | "intents" | "intent",
+    intent_name?: string,
+  ) =>
+    request<{ module: "routes" | "intents" | "intent"; content: string }>(
+      "/config/prompt-preview/module",
+      "POST",
+      { module, intent_name },
     ),
   models: (offset = 0) =>
     request<ModelConfig[]>(`/model-configs?limit=200&offset=${offset}`),

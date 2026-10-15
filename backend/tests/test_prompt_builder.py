@@ -38,6 +38,8 @@ def test_prompt_is_deterministic_and_contains_dynamic_config_and_schema() -> Non
 
 def test_disabled_business_configuration_is_not_injected() -> None:
     snapshot = _snapshot().model_copy(deep=True)
+    disabled_route = snapshot.routes[0].name
+    snapshot.routes[0].enabled = False
     snapshot.intents[0].enabled = False
     snapshot.slots[0].enabled = False
     snapshot.examples[1].enabled = False
@@ -46,6 +48,9 @@ def test_disabled_business_configuration_is_not_injected() -> None:
     system = json.loads(result.messages[0].content)
     effective = system["business_config"]
 
+    assert disabled_route not in {item["name"] for item in effective["routes"]}
+    assert all(item["route"] != disabled_route for item in effective["intents"])
+    assert all(item["route"] != disabled_route for item in effective["examples"])
     assert "start_training" not in {item["name"] for item in effective["intents"]}
     assert "exercise" not in {item["name"] for item in effective["slots"]}
     assert all(item.get("intent") != "start_training" for item in effective["examples"])
@@ -74,17 +79,23 @@ def test_prompt_builder_revalidates_snapshot_instances_before_use() -> None:
     assert actual.prompt_hash == expected.prompt_hash
     assert actual.metadata == expected.metadata
 
-    snapshot.routes[0].enabled = False
-    with pytest.raises(ValidationError, match="all fixed Route Contract routes must be enabled"):
+    snapshot.routes.clear()
+    with pytest.raises(ValidationError):
         PromptBuilder().build(snapshot, text="我要做深蹲")
 
 
-def test_prompt_builder_rejects_snapshot_with_a_missing_fixed_route() -> None:
+def test_prompt_builder_accepts_a_new_route_and_injects_it() -> None:
     snapshot = _snapshot()
-    snapshot.routes.pop()
+    snapshot.routes.append(
+        snapshot.routes[0].model_copy(
+            update={"name": "customer_service", "zh": "客户服务", "description": "客户服务请求"}
+        )
+    )
 
-    with pytest.raises(ValidationError, match="seven fixed Route Contract"):
-        PromptBuilder().build(snapshot, text="我要做深蹲")
+    result = PromptBuilder().build(snapshot, text="我要联系客服")
+    system = json.loads(result.messages[0].content)
+
+    assert "customer_service" in {item["name"] for item in system["business_config"]["routes"]}
 
 
 def canonical_schema_text(schema: object) -> str:

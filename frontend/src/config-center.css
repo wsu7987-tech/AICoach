@@ -40,12 +40,142 @@
 .model-select {
   width: 350px;
 }
-.route-row {
+.section-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+.route-table {
+  width: 100%;
+}
+.intent-manager {
   display: grid;
-  grid-template-columns: 180px 150px 1fr;
-  gap: 10px;
+  grid-template-columns: minmax(360px, 36%) 1fr;
+  min-height: 620px;
+  border: 1px solid #e1e6ef;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.intent-sidebar {
+  padding: 14px;
+  border-right: 1px solid #e1e6ef;
+  background: #f8fafc;
+  overflow: auto;
+}
+.intent-tree {
+  margin-top: 12px;
+  background: transparent;
+}
+.intent-tree .el-tree-node__content {
+  height: auto;
+  min-height: 44px;
+  padding: 4px 0;
+  border-radius: 5px;
+}
+.intent-tree .el-tree-node__content:hover,
+.intent-tree .el-tree-node.is-current > .el-tree-node__content {
+  background: #e9f2ff;
+}
+.intent-tree-node {
+  display: flex;
   align-items: center;
-  margin: 10px 0;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding-right: 6px;
+}
+.intent-tree-node.is-route .intent-tree-label > span {
+  font-weight: 600;
+}
+.intent-tree-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  color: #263247;
+}
+.intent-tree-label > span,
+.intent-tree-label small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.intent-tree-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+.intent-tree-actions .el-button + .el-button {
+  margin-left: 4px;
+}
+.intent-detail {
+  padding: 20px;
+  overflow: auto;
+}
+.intent-detail-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #edf0f5;
+}
+.intent-detail-heading h3 {
+  margin: 0 0 3px;
+}
+.intent-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 16px;
+}
+.intent-form-grid label,
+.dialog-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.wide-field {
+  grid-column: 1 / -1;
+}
+.utterance-editor {
+  margin-top: 22px;
+}
+.utterance-editor h3 {
+  margin: 0 0 8px;
+}
+.utterance-add {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+.utterance-list {
+  margin-top: 8px;
+  border-top: 1px solid #edf0f5;
+}
+.utterance-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 2px;
+  border-bottom: 1px solid #edf0f5;
+}
+.empty-group {
+  margin: 8px;
+  color: #8b95a7;
+  font-size: 12px;
+}
+.intent-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+.dialog-form {
+  display: grid;
+  gap: 12px;
 }
 .diff-grid {
   display: grid;
@@ -60,6 +190,19 @@
   max-height: 55vh;
   overflow: auto;
 }
+.prompt-view {
+  margin: 0;
+  padding: 18px 20px;
+  max-height: 65vh;
+  overflow: auto;
+  border: 1px solid #e1e6ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #1f2937;
+  font: 14px/1.75 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .hash {
   overflow-wrap: anywhere;
   font-family: monospace;
@@ -72,8 +215,17 @@
   margin: 8px 0 5px;
 }
 @media (max-width: 900px) {
-  .route-row,
-  .diff-grid {
+  .diff-grid,
+  .intent-manager,
+  .intent-form-grid {
     grid-template-columns: 1fr;
+  }
+  .intent-sidebar {
+    max-height: 300px;
+    border-right: 0;
+    border-bottom: 1px solid #e1e6ef;
+  }
+  .wide-field {
+    grid-column: auto;
   }
 }

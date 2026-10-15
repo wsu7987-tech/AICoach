@@ -129,7 +129,7 @@ def test_mutated_loaded_configuration_fails_before_http(scenario_server, field):
     loader = InMemoryRuntimeConfigLoader(_snapshot(), provider.model_config)
     value = loader._configuration
     if field == "snapshot":
-        value.snapshot.routes.pop()
+        value.snapshot.routes.clear()
     elif field == "model_config_snapshot":
         value.model_config_snapshot.params_json["temperature"] = 1
     else:

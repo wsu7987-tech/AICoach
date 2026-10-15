@@ -151,6 +151,27 @@ async def preview_prompt(
     return PromptBuilder().preview(payload, text, context)
 
 
+async def preview_prompt_module(
+    session: AsyncSession,
+    module: str,
+    intent_name: str | None,
+) -> dict[str, str]:
+    row = await require_draft(session)
+    payload, _ = validate_business(row.draft_json)
+    builder = PromptBuilder()
+    if module == "routes":
+        return {"module": module, "content": builder.preview_routes(payload)}
+    if module == "intents":
+        return {"module": module, "content": builder.preview_intents(payload)}
+    if module == "intent" and intent_name:
+        try:
+            content = builder.preview_intent(payload, intent_name)
+        except ValueError as error:
+            raise ConfigError("CONFIG_INVALID", str(error), 422) from None
+        return {"module": module, "content": content}
+    raise ConfigError("INVALID_INPUT", "单个 Intent 预览必须指定 intent_name", 422)
+
+
 def effective_model_snapshot(row: ModelConfig) -> ModelConfigSnapshot:
     """TASK-102/103 boundary; metadata is excluded from the independently checked hash.
 

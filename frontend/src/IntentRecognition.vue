@@ -8,7 +8,7 @@ const emit = defineEmits<{
   navigate: [path: "/models" | "/config"];
 }>();
 
-const routeLabels: Record<IntentResult["route"], string> = {
+const routeLabels: Record<string, string> = {
   training_business: "训练业务",
   information_query: "信息查询",
   sports_knowledge: "运动知识",
@@ -35,12 +35,17 @@ const result = ref<IntentResult | null>(null);
 const elapsedMs = ref<number | null>(null);
 const resultModelLabel = ref("");
 
-const enabledModels = computed(() => models.value.filter((model) => model.enabled));
+const enabledModels = computed(() =>
+  models.value.filter((model) => model.enabled),
+);
 const selectedModel = computed(() =>
-  enabledModels.value.find((model) => model.model_uid === selectedModelUid.value),
+  enabledModels.value.find(
+    (model) => model.model_uid === selectedModelUid.value,
+  ),
 );
 const canSubmit = computed(
-  () => Boolean(text.value.trim() && selectedModelUid.value) && !recognizing.value,
+  () =>
+    Boolean(text.value.trim() && selectedModelUid.value) && !recognizing.value,
 );
 
 function readableError(value: unknown): string {
@@ -53,7 +58,8 @@ function readableError(value: unknown): string {
     SERVICE_BUSY: "模型服务当前繁忙，请稍后重试。",
     MODEL_TIMEOUT: "模型服务响应超时，请重试或检查模型超时设置。",
     MODEL_RATE_LIMIT: "模型服务请求过于频繁，请稍后重试。",
-    MODEL_PROVIDER_ERROR: "模型服务调用失败，请检查 API 地址、API Key 和模型名称。",
+    MODEL_PROVIDER_ERROR:
+      "模型服务调用失败，请检查 API 地址、API Key 和模型名称。",
     MODEL_OUTPUT_PARSE_ERROR: "模型没有返回可解析的识别结果，请重新识别。",
     MODEL_OUTPUT_SCHEMA_ERROR: "模型返回结果不符合意图识别格式，请重新识别。",
     INTERNAL_ERROR: "系统处理失败，请稍后重试。",
@@ -74,8 +80,9 @@ async function loadModels() {
     );
     if (!currentStillAvailable) {
       selectedModelUid.value =
-        available.find((model) => model.model_uid === response.default_model_uid)
-          ?.model_uid ??
+        available.find(
+          (model) => model.model_uid === response.default_model_uid,
+        )?.model_uid ??
         available[0]?.model_uid ??
         "";
     }
@@ -154,10 +161,15 @@ onMounted(() => void loadModels());
               </div>
             </el-option>
           </el-select>
-          <el-button :loading="loadingModels" @click="loadModels">刷新</el-button>
+          <el-button :loading="loadingModels" @click="loadModels"
+            >刷新</el-button
+          >
         </div>
 
-        <div v-if="!loadingModels && enabledModels.length === 0" class="no-model-notice">
+        <div
+          v-if="!loadingModels && enabledModels.length === 0"
+          class="no-model-notice"
+        >
           <span>当前没有可用模型</span>
           <el-button link type="primary" @click="emit('navigate', '/models')">
             前往模型管理
@@ -240,7 +252,7 @@ onMounted(() => void loadModels());
           <section class="result-section route-section">
             <h3>一级路由</h3>
             <div class="route-value">
-              <strong>{{ routeLabels[result.route] }}</strong>
+              <strong>{{ routeLabels[result.route] ?? result.route }}</strong>
               <code>{{ result.route }}</code>
             </div>
           </section>
@@ -254,7 +266,10 @@ onMounted(() => void loadModels());
                 class="intent-candidate"
               >
                 <div class="candidate-label">
-                  <span><strong>{{ candidate.zh }}</strong><small>{{ candidate.name }}</small></span>
+                  <span
+                    ><strong>{{ candidate.zh }}</strong
+                    ><small>{{ candidate.name }}</small></span
+                  >
                   <b>{{ confidence(candidate.confidence) }}</b>
                 </div>
                 <el-progress
@@ -270,8 +285,13 @@ onMounted(() => void loadModels());
           <section class="result-section">
             <h3>识别参数</h3>
             <dl v-if="result.slots.length" class="slot-list">
-              <div v-for="(slot, index) in result.slots" :key="`${slot.name}-${index}`">
-                <dt>{{ slot.zh }} <small>{{ slot.name }}</small></dt>
+              <div
+                v-for="(slot, index) in result.slots"
+                :key="`${slot.name}-${index}`"
+              >
+                <dt>
+                  {{ slot.zh }} <small>{{ slot.name }}</small>
+                </dt>
                 <dd>{{ slot.value }}</dd>
               </div>
             </dl>
@@ -281,10 +301,18 @@ onMounted(() => void loadModels());
           <section class="result-section compact-result-row">
             <div>
               <h3>风险</h3>
-              <el-tag v-if="!result.risk" type="success" effect="light">无</el-tag>
+              <el-tag v-if="!result.risk" type="success" effect="light"
+                >无</el-tag
+              >
               <div v-else class="risk-value">
                 <el-tag
-                  :type="result.risk.level === 'high' ? 'danger' : result.risk.level === 'medium' ? 'warning' : 'info'"
+                  :type="
+                    result.risk.level === 'high'
+                      ? 'danger'
+                      : result.risk.level === 'medium'
+                        ? 'warning'
+                        : 'info'
+                  "
                 >
                   {{ riskLabels[result.risk.level] }}风险
                 </el-tag>
@@ -293,7 +321,10 @@ onMounted(() => void loadModels());
             </div>
           </section>
 
-          <section v-if="result.need_clarification" class="result-section clarification">
+          <section
+            v-if="result.need_clarification"
+            class="result-section clarification"
+          >
             <h3>需要补充信息</h3>
             <p>{{ result.clarification }}</p>
           </section>

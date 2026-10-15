@@ -33,11 +33,11 @@ def test_unknown_bootstrap_top_level_field_is_rejected() -> None:
         parse_bootstrap_json(json.dumps(document, ensure_ascii=False))
 
 
-def test_bootstrap_cannot_modify_fixed_route_contract() -> None:
+def test_bootstrap_rejects_duplicate_route_names() -> None:
     document = json.loads(BOOTSTRAP_PATH.read_text(encoding="utf-8"))
-    document["routes"][0]["enabled"] = False
+    document["routes"].append(document["routes"][0].copy())
 
-    with pytest.raises(BootstrapValidationError, match="all fixed Route Contract"):
+    with pytest.raises(BootstrapValidationError, match="route names must be unique"):
         parse_bootstrap_json(json.dumps(document, ensure_ascii=False))
 
 

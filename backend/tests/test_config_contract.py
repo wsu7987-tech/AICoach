@@ -37,9 +37,8 @@ def model_input(**overrides):
 @pytest.mark.parametrize(
     "mutation",
     [
-        lambda d: d["routes"].pop(),
-        lambda d: d["routes"].append({**d["routes"][0], "name": "eighth"}),
-        lambda d: d["routes"][0].update(enabled=False),
+        lambda d: d["routes"].clear(),
+        lambda d: d["routes"].append({**d["routes"][0]}),
         lambda d: d["intents"][0].update(route="missing"),
         lambda d: d["slots"][0].update(value_type="enum", enum_group="missing"),
         lambda d: d["examples"][0].update(intent="missing"),
@@ -59,7 +58,7 @@ def test_invalid_business_configuration(mutation):
 
 def test_c7_reparse_mutated_instance():
     config = RuntimeConfigSnapshot.model_validate(document())
-    config.routes.pop()
+    config.routes.clear()
     with pytest.raises(ValidationError):
         business_snapshot(config)
 

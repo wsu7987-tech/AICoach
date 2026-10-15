@@ -36,28 +36,19 @@ test("real MySQL configuration: bootstrap, dynamic intent, publish, history and 
     .items[0];
 
   await page.getByRole("tab", { name: "Intent", exact: true }).click();
-  const intents = [
-    ...initial.draft_json.intents,
-    {
-      name: "browser_intent",
-      zh: "浏览器新增意图",
-      description: "在线新增",
-      route: "social_chat",
-      enabled: true,
-      aliases: ["新称呼"],
-    },
-  ];
-  await page.locator("#intents-editor").fill(JSON.stringify(intents));
-  const examples = [
-    ...initial.draft_json.examples,
-    {
-      text: "新称呼",
-      route: "social_chat",
-      intent: "browser_intent",
-      enabled: true,
-    },
-  ];
-  await page.locator("#examples-editor").fill(JSON.stringify(examples));
+  await page.getByRole("button", { name: "新增 Intent" }).click();
+  await page
+    .getByRole("textbox", { name: "Intent 标识" })
+    .fill("browser_intent");
+  await page
+    .getByRole("textbox", { name: "Intent 显示名称" })
+    .fill("浏览器新增意图");
+  await page.getByRole("combobox", { name: "Intent 所属 Route" }).click();
+  await page.getByRole("option", { name: /social_chat/ }).click();
+  await page.getByRole("textbox", { name: "Intent 说明" }).fill("在线新增");
+  await page.getByRole("textbox", { name: "典型用户说法" }).fill("新称呼");
+  await page.getByRole("button", { name: "添加", exact: true }).click();
+  await page.getByRole("button", { name: "保存 Intent" }).click();
   await page.getByRole("tab", { name: "Enum/Alias", exact: true }).click();
   const enums = structuredClone(initial.draft_json.enums);
   enums.body_part.push({
@@ -72,10 +63,8 @@ test("real MySQL configuration: bootstrap, dynamic intent, publish, history and 
   await expect(
     page.getByRole("button", { name: "Prompt 预览", exact: true }),
   ).toBeDisabled();
-  await page.getByRole("button", { name: "保存 Draft", exact: true }).click();
-  await expect(
-    page.getByText("Draft 已保存，Active Release 未改变"),
-  ).toBeVisible();
+  await page.getByRole("button", { name: "保存配置", exact: true }).click();
+  await expect(page.getByText("配置已保存")).toBeVisible();
   await page.getByRole("button", { name: "校验", exact: true }).click();
   await expect(page.getByText(/校验通过：/)).toBeVisible();
   await page.getByRole("button", { name: "Prompt 预览", exact: true }).click();

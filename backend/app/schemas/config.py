@@ -34,6 +34,11 @@ class DraftPreview(AdminInput):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
+class PromptModulePreview(AdminInput):
+    module: Literal["routes", "intents", "intent"]
+    intent_name: str | None = Field(default=None, min_length=1)
+
+
 class PublishInput(AdminInput):
     default_model_config_id: int = Field(gt=0)
     note: str = Field(min_length=1, max_length=4000)
@@ -61,6 +66,11 @@ class DraftValidation(AdminOutput):
     config_snapshot_hash: str
     issues: list[dict[str, Any]]
     counts: dict[str, int]
+
+
+class PromptModulePreviewResult(AdminOutput):
+    module: Literal["routes", "intents", "intent"]
+    content: str
 
 
 class SectionChange(AdminOutput):

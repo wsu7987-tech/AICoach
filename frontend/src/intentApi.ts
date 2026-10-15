@@ -22,14 +22,7 @@ export interface RiskInfo {
 export interface IntentResult {
   request_id: string;
   text: string;
-  route:
-    | "training_business"
-    | "information_query"
-    | "sports_knowledge"
-    | "safety"
-    | "dialogue_device_control"
-    | "social_chat"
-    | "unknown";
+  route: string;
   intents: IntentCandidate[];
   slots: SlotValue[];
   risk: RiskInfo | null;
