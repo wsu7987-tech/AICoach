@@ -68,6 +68,11 @@ export interface IntentLatencyAnalysis {
   };
 }
 
+export interface IntentPrompt {
+  final_prompt: string;
+  truncated: boolean;
+}
+
 export class IntentApiError extends Error {
   constructor(
     public code: string,
@@ -116,4 +121,24 @@ export async function getIntentLatencyAnalysis(
     );
   }
   return data as IntentLatencyAnalysis;
+}
+
+export async function getIntentPrompt(
+  requestId: string,
+  modelUid: string,
+): Promise<IntentPrompt> {
+  const query = new URLSearchParams({
+    request_id: requestId,
+    model_uid: modelUid,
+  });
+  const response = await fetch(`/api/admin/intent/prompt?${query}`);
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new IntentApiError(
+      data?.error_code ?? "HTTP_ERROR",
+      data?.message ?? `提示词加载失败（HTTP ${response.status}）`,
+      response.status,
+    );
+  }
+  return data as IntentPrompt;
 }

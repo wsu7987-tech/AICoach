@@ -196,9 +196,7 @@ last_verify_status
 
 # 6. Model 数据结构
 
-产品语义建议从现有 `ModelConfig Version` 转换为“模型”。
-
-可新增新的模型实体，也可以兼容现有 ModelConfig 逐步过渡，但最终产品语义必须如下：
+产品语义已从旧 `ModelConfig Version` 转换为“模型”，由 `ManagedModel` 独立承载：
 
 ```text
 id
@@ -207,7 +205,7 @@ display_name
 provider（仅后端内部协议适配器标识，不是用户选择的厂商）
 model_name
 base_url
-credential_id / credential_ref
+credential_id
 params_json
 timeout_seconds
 max_retries
@@ -224,30 +222,26 @@ updated_at
 - Qwen、DeepSeek 或其他服务由 `base_url + model_name` 表达，`provider` 只用于后端内部选择协议适配器；
 - API Key 不进入模型 hash；
 - API Key 不进入历史调用快照；
-- 旧 credential_ref ENV 路径应继续兼容。
+- Credential 必须使用新的加密存储，不再支持旧 ENV 引用路径。
 
 ---
 
-# 7. 兼容旧 credential_ref
+# 7. Credential 解析
 
 Runtime Credential 解析顺序：
 
 ```text
-model.credential_id / credential_ref
+model.credential_id
 ↓
-优先查询新的 Credential Store
+查询 Provider Credential
 ↓
-如果没有
+使用部署主密钥解密到短生命周期内存对象
 ↓
-兼容读取旧环境变量 / K8s Secret
+调用结束后不进入任何持久化快照
 ```
 
-要求：
-
-- 不迁移旧 API Key；
-- 不删除旧环境变量；
-- 不强制历史 ModelConfig 修改；
-- 不破坏现有运行兼容性。
+缺少 Credential、解密失败或主密钥未配置时 fail closed，返回配置未就绪；不回退读取
+旧环境变量。
 
 ---
 
@@ -1072,19 +1066,9 @@ Timeout：
 
 ---
 
-# 27. 与现有 Release / ModelConfig 的关系
+# 27. Release 与模型的最终关系
 
-当前 v1.2.5 把：
-
-```text
-Business Config Release
-+
-default_model_config_id
-```
-
-绑在一起。
-
-本轮新的产品语义：
+当前实现采用以下产品语义：
 
 ```text
 Business Config
@@ -1105,21 +1089,16 @@ Runtime Request
 - “切模型”不应该要求用户手工创建 Release；
 - “设为默认模型”不应该要求发布 Release；
 - Runtime Request 可以显式指定 model_uid；
-- Business Release 和 Model Runtime Selection 应逐步解耦。
-
-如果实现这一点必须修改现有 Release Contract：
-
-**必须停止，向用户审批，不得自行改语义。**
+- Business Release 和 Model Runtime Selection 已完全解耦；
+- Release 只冻结业务规则，Runtime 使用请求指定的 `model_uid`，未指定时使用
+  `runtime_model_state.default_model_id`。
 
 ---
 
 # 28. 实现限制
 
-Codex 不得自行：
+当前实现限制：
 
-- 删除现有 Release 数据；
-- 改写历史 ModelConfig；
-- 迁移旧 Secret；
 - 把 API Key 写入 ModelConfig；
 - 把 API Key 写进 Trace；
 - 把 model_name / base_url 做成可编辑；
@@ -1143,12 +1122,13 @@ intent_recognition_result
 intent_recognition_failure
 ```
 
-但是：
+已确认采用破坏性迁移：
 
-- 不删除旧表；
-- 不修改旧历史数据；
-- migration 必须可 downgrade；
-- 若需要改变现有 `config_release` / `model_config` 语义，必须暂停审批。
+- 删除 `model_config` 表和旧模型 Provider/API；
+- 删除依赖旧 ModelConfig 语义的 Release、Trace、Evaluation 历史数据；
+- 删除 `managed_model.credential_ref` 环境变量兼容支路，仅保留加密 Credential；
+- 保留 `config_draft` 和已经使用加密凭据的 ManagedModel；
+- 该迁移不提供 downgrade，恢复只能依赖部署前备份。
 
 ---
 
@@ -1183,14 +1163,9 @@ intent_recognition_failure
 
 # 31. 当前执行 Gate
 
-Codex 可以继续 Step 1 实现，但若遇到以下情况必须停：
+Release 解耦、旧 ModelConfig 删除和不可逆迁移已获用户确认。仍需单独确认的事项：
 
-- 需要修改现有 Release Contract；
-- 需要修改历史 ModelConfig 语义；
-- 需要不可逆迁移；
-- 需要新增超出本设计的 Credential 能力；
-- 需要改变 model_uid 定义；
-- 需要改变成功/失败落库边界；
-- 需要执行任何测试。
-
-测试仍需用户单独批准。
+- 执行数据库迁移；
+- 执行任何测试；
+- 新增超出本设计的 Credential 能力；
+- 改变 model_uid 定义或成功/失败落库边界。

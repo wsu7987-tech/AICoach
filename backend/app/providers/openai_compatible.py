@@ -19,17 +19,14 @@ from app.providers.types import (
     ProviderCancelledError,
     diagnostic_attempts,
 )
-from app.schemas.managed_model import ManagedModelRuntimeSnapshot
 from app.schemas.intent import (
     LLMRecognitionOutput,
     LLMRecognitionOutputV2,
     LLMStructuredIntentOutput,
     LLMStructuredIntentOutputV2,
-    ModelConfigSnapshot,
     PromptBuildResult,
 )
-
-ProviderConfigSnapshot = ModelConfigSnapshot | ManagedModelRuntimeSnapshot
+from app.schemas.managed_model import ManagedModelRuntimeSnapshot
 
 
 class ProviderError(AppError):
@@ -55,7 +52,7 @@ class OpenAICompatibleProvider:
 
     def __init__(
         self,
-        model_config: ProviderConfigSnapshot,
+        runtime_snapshot: ManagedModelRuntimeSnapshot,
         *,
         api_key: str,
         queue_wait_timeout: float,
@@ -63,23 +60,25 @@ class OpenAICompatibleProvider:
         backoff_base_seconds: float = 0.25,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._model_config = type(model_config).model_validate(model_config.model_dump(mode="json"))
+        self._runtime_snapshot = type(runtime_snapshot).model_validate(
+            runtime_snapshot.model_dump(mode="json")
+        )
         self._provider_name = provider_name
-        self.base_url = model_config.base_url
+        self.base_url = runtime_snapshot.base_url
         self.queue_wait_timeout = queue_wait_timeout
         self.backoff_base_seconds = backoff_base_seconds
-        self._semaphore = asyncio.Semaphore(model_config.max_concurrency)
+        self._semaphore = asyncio.Semaphore(runtime_snapshot.max_concurrency)
         self._client = AsyncOpenAI(
             api_key=api_key,
-            base_url=model_config.base_url,
-            timeout=model_config.timeout_seconds,
+            base_url=runtime_snapshot.base_url,
+            timeout=runtime_snapshot.timeout_seconds,
             max_retries=0,
             http_client=http_client or httpx.AsyncClient(trust_env=False),
         )
 
     @property
-    def model_config(self) -> ProviderConfigSnapshot:
-        return self._model_config.model_copy(deep=True)
+    def runtime_snapshot(self) -> ManagedModelRuntimeSnapshot:
+        return self._runtime_snapshot.model_copy(deep=True)
 
     async def close(self) -> None:
         await self._client.close()
@@ -114,7 +113,7 @@ class OpenAICompatibleProvider:
     async def _invoke_after_acquire(self, prompt: PromptBuildResult) -> LLMResponse:
         request = self._build_request(prompt)
         attempts: list[LLMAttempt] = []
-        total_attempts = self.model_config.max_retries + 1
+        total_attempts = self.runtime_snapshot.max_retries + 1
         for attempt_no in range(1, total_attempts + 1):
             started = time.perf_counter()
             try:
@@ -128,7 +127,7 @@ class OpenAICompatibleProvider:
                         attempt_no=attempt_no,
                         is_retry=attempt_no > 1,
                         provider=self._provider_name,
-                        model=self.model_config.model,
+                        model=self.runtime_snapshot.model,
                         params=self._safe_params(request),
                         raw_request=self.sanitize(request),
                         raw_response=raw_response,
@@ -147,7 +146,7 @@ class OpenAICompatibleProvider:
                 return LLMResponse(
                     content=content,
                     attempts=attempts,
-                    response_mode=self.model_config.structured_output_mode,
+                    response_mode=self.runtime_snapshot.structured_output_mode,
                 )
             except asyncio.CancelledError as exc:
                 attempts.append(self._cancelled_attempt(attempt_no, request, started))
@@ -174,11 +173,11 @@ class OpenAICompatibleProvider:
     def _build_request(self, prompt: PromptBuildResult) -> dict[str, Any]:
         params = {
             key: value
-            for key, value in self.model_config.params_json.items()
+            for key, value in self.runtime_snapshot.params_json.items()
             if key not in {"max_tokens", "response_format", "model", "messages"}
         }
         request: dict[str, Any] = {
-            "model": self.model_config.model,
+            "model": self.runtime_snapshot.model,
             "messages": [message.model_dump(mode="json") for message in prompt.messages],
             **params,
             "response_format": self._response_format(prompt),
@@ -187,7 +186,7 @@ class OpenAICompatibleProvider:
         return request
 
     def _response_format(self, prompt: PromptBuildResult) -> dict[str, Any]:
-        if self.model_config.structured_output_mode == "json_object":
+        if self.runtime_snapshot.structured_output_mode == "json_object":
             return {"type": "json_object"}
         schema_name = prompt.metadata.get("output_schema_name")
         output_models = {
@@ -242,7 +241,7 @@ class OpenAICompatibleProvider:
             attempt_no=attempt_no,
             is_retry=attempt_no > 1,
             provider=self._provider_name,
-            model=self.model_config.model,
+            model=self.runtime_snapshot.model,
             params=self._safe_params(request),
             raw_request=self.sanitize(request),
             raw_response=self._error_response(exc),
@@ -260,7 +259,7 @@ class OpenAICompatibleProvider:
             attempt_no=attempt_no,
             is_retry=attempt_no > 1,
             provider=self._provider_name,
-            model=self.model_config.model,
+            model=self.runtime_snapshot.model,
             params=self._safe_params(request),
             raw_request=self.sanitize(request),
             latency_ms=self._elapsed_ms(started),

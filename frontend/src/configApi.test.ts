@@ -4,16 +4,16 @@ import { configApi, ConfigApiError, type PublishSummary } from "./configApi";
 afterEach(() => vi.unstubAllGlobals());
 describe("Admin API client contract", () => {
   it.each([null, 1])(
-    "sends both review tokens with active=%s",
+    "publishes business configuration with active=%s",
     async (active) => {
       const fetch = vi
         .fn()
         .mockResolvedValue({ ok: true, json: async () => ({ id: 2 }) });
       vi.stubGlobal("fetch", fetch);
       const summary = {
-        default_model_config_id: 3,
         draft_hash: "hash",
         active_release_id: active,
+        changes: [],
       } as PublishSummary;
       await configApi.publish(summary, "reviewed");
       expect(fetch).toHaveBeenCalledWith(
@@ -21,7 +21,6 @@ describe("Admin API client contract", () => {
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({
-            default_model_config_id: 3,
             note: "reviewed",
             expected_draft_hash: "hash",
             expected_active_release_id: active,

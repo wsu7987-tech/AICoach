@@ -65,7 +65,7 @@ def _view(
         max_retries=row.max_retries,
         max_concurrency=row.max_concurrency,
         enabled=row.enabled,
-        credential_configured=credential is not None or bool(row.credential_ref),
+        credential_configured=credential is not None,
         credential_hint=credential.secret_hint if credential is not None else None,
         last_verified_at=credential.last_verified_at if credential is not None else None,
         is_default=row.id == default_model_id,
@@ -85,7 +85,7 @@ async def _get_row(session: AsyncSession, model_uid: str, *, lock: bool = False)
 
 
 async def _credential(session: AsyncSession, row: ManagedModel) -> ProviderCredential | None:
-    return await session.get(ProviderCredential, row.credential_id) if row.credential_id else None
+    return await session.get(ProviderCredential, row.credential_id)
 
 
 async def list_models(session: AsyncSession) -> dict[str, object]:
@@ -150,7 +150,6 @@ async def create_model(
         model_name=body.model_name,
         base_url=body.base_url,
         credential_id=credential.id,
-        credential_ref=None,
         params_json=_params(body.temperature, body.top_p),
         timeout_seconds=body.timeout_seconds,
         max_retries=body.max_retries,
@@ -394,12 +393,6 @@ async def verify_existing(
         api_key = replacement_api_key
     elif credential is not None:
         api_key = decrypt_model_credential(cipher, credential)
-    elif row.credential_ref:
-        raise ConfigError(
-            "LEGACY_CREDENTIAL_REQUIRES_RUNTIME",
-            "旧环境凭据请在运行环境中验证",
-            409,
-        )
     else:
         raise ConfigError("CREDENTIAL_NOT_FOUND", "模型尚未配置 API Key", 409)
     result = await verify_connection(

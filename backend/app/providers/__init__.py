@@ -1,7 +1,6 @@
 """Async model-provider boundary used by IntentService."""
 
-from app.providers.openai_compatible import OpenAICompatibleProvider
-from app.providers.qwen import ProviderError, QwenProvider
+from app.providers.openai_compatible import OpenAICompatibleProvider, ProviderError
 from app.providers.types import LLMAttempt, LLMProvider, LLMResponse, ProviderCancelledError
 
 __all__ = [
@@ -11,5 +10,4 @@ __all__ = [
     "OpenAICompatibleProvider",
     "ProviderCancelledError",
     "ProviderError",
-    "QwenProvider",
 ]

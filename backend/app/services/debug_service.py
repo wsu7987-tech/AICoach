@@ -9,68 +9,50 @@ from sqlalchemy import Text, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import AppError, ErrorCode
-from app.db.models import EvaluationRun, IntentRequestTrace, LLMCallTrace, ModelConfig, RuntimeState
+from app.db.models import EvaluationRun, IntentRequestTrace, LLMCallTrace, RuntimeState
 from app.prompting.builder import PromptBuilder
 from app.providers.factory import ModelProviderFactory
-from app.schemas.config import release_fingerprint
-from app.schemas.intent import ModelConfigSnapshot
 from app.services import config_service
-from app.services.intent_service import IntentService, RuntimeConfiguration
+from app.services.intent_service import BusinessRuntimeConfiguration, IntentService, ManagedModelLoader
 from app.services.trace_store import DatabaseTraceStore
 
 
 class FixedConfigurationLoader:
-    def __init__(self, configuration: RuntimeConfiguration) -> None:
+    def __init__(self, configuration: BusinessRuntimeConfiguration) -> None:
         self._configuration = configuration
 
-    async def load(self) -> RuntimeConfiguration:
-        return RuntimeConfiguration.model_validate(self._configuration.model_dump(mode="json"))
+    async def load(self) -> BusinessRuntimeConfiguration:
+        return BusinessRuntimeConfiguration.model_validate(
+            self._configuration.model_dump(mode="json")
+        )
 
 
 async def configuration_for(
     session: AsyncSession,
     release_id: int | None,
-    model_config_id: int | None,
-    historical_model: dict[str, Any] | None = None,
-) -> RuntimeConfiguration:
+) -> BusinessRuntimeConfiguration:
     if release_id is None:
         state = await session.get(RuntimeState, 1)
         if state is None or state.active_release_id is None:
             raise AppError(ErrorCode.CONFIG_NOT_READY, "runtime configuration is not ready", 503)
         release_id = state.active_release_id
     release = await config_service.release_configuration(session, release_id)
-    if historical_model is not None:
-        model = ModelConfigSnapshot.model_validate(historical_model)
-    elif model_config_id is not None:
-        row = await session.get(ModelConfig, model_config_id)
-        if row is None:
-            raise config_service.ConfigError("MODEL_NOT_FOUND", "Model Config 不存在", 404)
-        model = config_service.effective_model_snapshot(row)
-        if not model.enabled:
-            raise config_service.ConfigError(
-                "MODEL_DISABLED", "已禁用版本不能用于新的调试或 Replay", 409
-            )
-    else:
-        model = ModelConfigSnapshot.model_validate(release["model_config_snapshot"])
-    return RuntimeConfiguration(
+    return BusinessRuntimeConfiguration(
         snapshot=release["snapshot_json"],
-        model_config_snapshot=model,
         release_id=release["id"],
         config_snapshot_hash=release["config_snapshot_hash"],
-        model_config_hash=model.model_config_hash,
-        release_fingerprint=release_fingerprint(
-            release["config_snapshot_hash"], model.id, model.model_config_hash
-        ),
     )
 
 
 async def execute(
     sessions: async_sessionmaker,
     provider_factory: ModelProviderFactory,
+    managed_model_loader: ManagedModelLoader,
     *,
     text: str,
     context: dict[str, Any],
-    configuration: RuntimeConfiguration,
+    configuration: BusinessRuntimeConfiguration,
+    model_uid: str | None,
     repeat: int,
     mode: str,
     parent_trace_id: str | None = None,
@@ -80,12 +62,17 @@ async def execute(
         provider_factory,
         PromptBuilder(),
         DatabaseTraceStore(sessions),
+        managed_model_loader,
     )
     runs: list[dict[str, Any]] = []
     for _ in range(repeat):
         try:
             result = await service.analyze(
-                text=text, context=context, execution_mode=mode, parent_trace_id=parent_trace_id
+                text=text,
+                context=context,
+                model_uid=model_uid,
+                execution_mode=mode,
+                parent_trace_id=parent_trace_id,
             )  # type: ignore[arg-type]
             trace = await latest_trace(sessions, mode, parent_trace_id)
             runs.append(
@@ -142,12 +129,10 @@ def _trace(row: IntentRequestTrace, attempts: list[LLMCallTrace]) -> dict[str, A
         "release": {
             "id": row.release_id,
             "config_snapshot_hash": row.config_snapshot_hash,
-            "fingerprint": row.release_fingerprint,
         },
         "model": {
-            "id": row.effective_model_config_id,
-            "hash": row.model_config_hash,
-            "snapshot": row.model_config_snapshot_json,
+            "model_uid": row.managed_model_uid,
+            "snapshot": row.managed_model_snapshot_json,
         },
         "runtime_result": row.final_result_json,
         "route": row.final_route,
@@ -214,7 +199,7 @@ async def list_traces(sessions: async_sessionmaker, filters: dict[str, Any]) -> 
         "route": IntentRequestTrace.final_route,
         "status": IntentRequestTrace.status,
         "release_id": IntentRequestTrace.release_id,
-        "model_config_id": IntentRequestTrace.effective_model_config_id,
+        "model_uid": IntentRequestTrace.managed_model_uid,
     }
     async with sessions() as session:
         query = select(IntentRequestTrace)
@@ -258,7 +243,7 @@ async def list_traces(sessions: async_sessionmaker, filters: dict[str, Any]) -> 
                 "input": row.input,
                 "route": row.final_route,
                 "release_id": row.release_id,
-                "model_config_id": row.effective_model_config_id,
+                "model_uid": row.managed_model_uid,
                 "latency_ms": row.latency_ms,
                 "status": row.status,
                 "created_at": row.created_at,
@@ -317,7 +302,7 @@ async def intent_latency_analysis(
     matching = [
         row
         for row in candidates
-        if (row.model_config_snapshot_json or {}).get("model_uid") == model_uid
+        if row.managed_model_uid == model_uid
     ][:sample_size]
     values = [int(row.latency_ms) for row in matching if row.latency_ms is not None]
     average = round(sum(values) / len(values)) if values else None
@@ -342,6 +327,48 @@ async def intent_latency_analysis(
             "min_ms": min(values) if values else None,
             "max_ms": max(values) if values else None,
         },
+    }
+
+
+async def intent_prompt(
+    sessions: async_sessionmaker,
+    *,
+    request_id: str,
+    model_uid: str,
+) -> dict[str, Any]:
+    """Return only the readable prompt persisted for one Runtime request."""
+
+    async with sessions() as session:
+        trace_id = await session.scalar(
+            select(IntentRequestTrace.trace_id)
+            .where(
+                IntentRequestTrace.request_id == request_id,
+                IntentRequestTrace.source == "runtime",
+                IntentRequestTrace.managed_model_uid == model_uid,
+            )
+            .order_by(IntentRequestTrace.created_at.desc(), IntentRequestTrace.id.desc())
+            .limit(1)
+        )
+        if trace_id is None:
+            raise config_service.ConfigError(
+                "TRACE_NOT_FOUND", "本次识别的提示词记录不可用", 404
+            )
+        attempt = await session.scalar(
+            select(LLMCallTrace)
+            .where(
+                LLMCallTrace.trace_id == trace_id,
+                LLMCallTrace.final_prompt.is_not(None),
+            )
+            .order_by(LLMCallTrace.attempt_no.desc())
+            .limit(1)
+        )
+    if attempt is None or attempt.final_prompt is None:
+        raise config_service.ConfigError(
+            "PROMPT_NOT_FOUND", "本次识别未保存可查看的提示词", 404
+        )
+    return {
+        "final_prompt": attempt.final_prompt,
+        "truncated": attempt.final_prompt_truncated,
     }
 
 

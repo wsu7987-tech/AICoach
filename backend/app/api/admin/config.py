@@ -11,7 +11,6 @@ from app.db.models import (
     ConfigDraft,
     ConfigRelease,
     ManagedModel,
-    ModelConfig,
     RuntimeModelState,
     RuntimeState,
 )
@@ -21,7 +20,6 @@ from app.schemas.config import (
     DraftUpdate,
     DraftValidation,
     DraftView,
-    ModelConfigCreate,
     PromptModulePreview,
     PromptModulePreviewResult,
     PublishedRelease,
@@ -31,7 +29,7 @@ from app.schemas.config import (
     ReleaseHistory,
     RestoreInput,
 )
-from app.schemas.intent import ModelConfigSnapshot, PromptBuildResult
+from app.schemas.intent import PromptBuildResult
 from app.services import config_service as service
 from app.services import debug_service
 
@@ -90,37 +88,9 @@ async def preview_prompt_module(body: PromptModulePreview, session: Session):
     )
 
 
-@router.get("/model-configs", response_model=list[ModelConfigSnapshot])
-async def list_models(
-    session: Session, offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200)
-):
-    rows = await session.scalars(
-        select(ModelConfig).order_by(ModelConfig.id.desc()).offset(offset).limit(limit)
-    )
-    return [service.effective_model_snapshot(row) for row in rows]
-
-
-@router.post("/model-configs", status_code=201, response_model=ModelConfigSnapshot)
-async def create_model(body: ModelConfigCreate, session: Session):
-    return await service.create_model(session, body)
-
-
-@router.get("/model-configs/{model_id}", response_model=ModelConfigSnapshot)
-async def get_model(model_id: int, session: Session):
-    row = await session.get(ModelConfig, model_id)
-    if row is None:
-        raise service.ConfigError("MODEL_NOT_FOUND", "Model Config 不存在", 404)
-    return service.effective_model_snapshot(row)
-
-
-@router.post("/model-configs/{model_id}/disable", response_model=ModelConfigSnapshot)
-async def disable_model(model_id: int, session: Session):
-    return await service.disable_model(session, model_id)
-
-
 @router.get("/config/publish-summary", response_model=PublishSummary)
-async def publish_summary(session: Session, default_model_config_id: int = Query(gt=0)):
-    return await service.publish_summary(session, default_model_config_id)
+async def publish_summary(session: Session):
+    return await service.publish_summary(session)
 
 
 @router.post("/releases", status_code=201, response_model=PublishedRelease)
@@ -144,7 +114,13 @@ async def list_releases(
 
 @router.get("/releases/{release_id}", response_model=ReleaseDetail)
 async def get_release(release_id: int, session: Session):
-    return await service.release_configuration(session, release_id)
+    configuration = await service.release_configuration(session, release_id)
+    # Runtime integrity fields stay inside the service boundary. The product
+    # detail API returns only the business snapshot and readable metadata.
+    return {
+        key: configuration[key]
+        for key in ("id", "version", "note", "created_by", "created_at", "snapshot_json")
+    }
 
 
 @router.post("/releases/{release_id}/create-draft", response_model=DraftView)
@@ -169,7 +145,7 @@ async def status_summary(request: Request, session: Session):
             ready = bool(
                 managed_model
                 and managed_model.enabled
-                and (managed_model.credential_id or managed_model.credential_ref)
+                and managed_model.credential_id
             )
         except service.ConfigError:
             pass
@@ -180,9 +156,21 @@ async def status_summary(request: Request, session: Session):
             configuration = await service.release_configuration(session, active_id)
             active = {
                 key: configuration[key]
-                for key in ("id", "version", "config_snapshot_hash", "release_fingerprint")
+                for key in ("version", "note", "created_at")
             }
-            default_model = configuration["model_config_snapshot"]
+            model_state = await session.get(RuntimeModelState, 1)
+            managed_model = (
+                await session.get(ManagedModel, model_state.default_model_id)
+                if model_state is not None and model_state.default_model_id is not None
+                else None
+            )
+            if managed_model is not None:
+                default_model = {
+                    "model_uid": managed_model.model_uid,
+                    "display_name": managed_model.display_name,
+                    "model_name": managed_model.model_name,
+                    "enabled": managed_model.enabled,
+                }
         except service.ConfigError:
             pass
     # /ready is the authoritative service-plane definition, intentionally
@@ -206,6 +194,6 @@ async def status_summary(request: Request, session: Session):
         "active_release_id": active_id,
         "service_ready": bool(report and report.ready),
         "active_release": active,
-        "default_model_config": default_model,
+        "default_model": default_model,
         **metrics,
     }

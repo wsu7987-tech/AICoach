@@ -20,23 +20,24 @@ Session = Annotated[AsyncSession, Depends(session_dependency, scope="function")]
 def _components(request: Request):
     database = request.app.state.database
     provider_factory = request.app.state.provider_factory
-    if database is None or provider_factory is None:
+    managed_model_loader = request.app.state.managed_model_loader
+    if database is None or provider_factory is None or managed_model_loader is None:
         raise AppError(ErrorCode.CONFIG_NOT_READY, "runtime configuration is not ready", 503)
-    return database.session_factory, provider_factory
+    return database.session_factory, provider_factory, managed_model_loader
 
 
 @router.post("/debug/analyze")
 async def debug_analyze(body: DebugAnalyzeInput, request: Request, session: Session):
-    sessions, factory = _components(request)
-    configuration = await debug_service.configuration_for(
-        session, release_id=body.release_id, model_config_id=body.model_config_id
-    )
+    sessions, factory, managed_model_loader = _components(request)
+    configuration = await debug_service.configuration_for(session, release_id=body.release_id)
     results = await debug_service.execute(
         sessions,
         factory,
+        managed_model_loader,
         text=body.text,
         context=body.context,
         configuration=configuration,
+        model_uid=body.model_uid,
         repeat=body.repeat,
         mode="debug",
     )
@@ -58,7 +59,7 @@ async def traces(
     keyword: str | None = None,
     route: str | None = None,
     intent: str | None = None,
-    model_config_id: int | None = Query(default=None, gt=0),
+    model_uid: str | None = Query(default=None, pattern=r"^mdl_[a-f0-9]{64}$"),
     release_id: int | None = Query(default=None, gt=0),
     status: str | None = None,
     start: datetime | None = None,
@@ -66,13 +67,13 @@ async def traces(
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
 ):
-    sessions, _ = _components(request)
+    sessions, _, _ = _components(request)
     return await debug_service.list_traces(sessions, locals())
 
 
 @router.get("/traces/{trace_id}")
 async def trace_detail(trace_id: str, request: Request):
-    sessions, _ = _components(request)
+    sessions, _, _ = _components(request)
     return await debug_service.trace_detail(sessions, trace_id)
 
 
@@ -83,7 +84,7 @@ async def intent_latency_analysis(
     model_uid: str = Query(pattern=r"^mdl_[a-f0-9]{64}$"),
     sample_size: int = Query(default=20, ge=5, le=100),
 ):
-    sessions, _ = _components(request)
+    sessions, _, _ = _components(request)
     return await debug_service.intent_latency_analysis(
         sessions,
         request_id=request_id,
@@ -92,28 +93,37 @@ async def intent_latency_analysis(
     )
 
 
+@router.get("/intent/prompt")
+async def intent_prompt(
+    request: Request,
+    request_id: str = Query(min_length=1, max_length=128),
+    model_uid: str = Query(pattern=r"^mdl_[a-f0-9]{64}$"),
+):
+    sessions, _, _ = _components(request)
+    return await debug_service.intent_prompt(
+        sessions,
+        request_id=request_id,
+        model_uid=model_uid,
+    )
+
+
 @router.post("/traces/{trace_id}/replay")
 async def replay(trace_id: str, body: ReplayInput, request: Request, session: Session):
-    sessions, factory = _components(request)
+    sessions, factory, managed_model_loader = _components(request)
     original = await debug_service.trace_detail(sessions, trace_id)
     release_id = None if body.mode == "active" else original["release"]["id"]
-    historical_model = (
-        original["model"]["snapshot"]
-        if body.mode == "historical" and body.model_config_id is None
-        else None
+    historical_model_uid = (
+        original["model"]["model_uid"] if body.mode == "historical" else None
     )
-    configuration = await debug_service.configuration_for(
-        session,
-        release_id=release_id,
-        model_config_id=body.model_config_id,
-        historical_model=historical_model,
-    )
+    configuration = await debug_service.configuration_for(session, release_id=release_id)
     results = await debug_service.execute(
         sessions,
         factory,
+        managed_model_loader,
         text=original["input"],
         context=original["context"] or {},
         configuration=configuration,
+        model_uid=body.model_uid or historical_model_uid,
         repeat=body.repeat,
         mode="replay",
         parent_trace_id=trace_id,
@@ -123,7 +133,7 @@ async def replay(trace_id: str, body: ReplayInput, request: Request, session: Se
 
 @router.post("/traces/diff")
 async def diff(body: DiffInput, request: Request):
-    sessions, _ = _components(request)
+    sessions, _, _ = _components(request)
     return debug_service.diff(
         await debug_service.trace_detail(sessions, body.left_trace_id),
         await debug_service.trace_detail(sessions, body.right_trace_id),

@@ -58,7 +58,7 @@ HTTP 与 error_code 映射（Contract，不再“按网关约定”）：
 |---|---|---|
 | INVALID_INPUT | 422 | 字段缺失/类型错误、text 超 `MAX_TEXT_CHARS`、context 超 `MAX_CONTEXT_BYTES` |
 | PAYLOAD_TOO_LARGE | 413 | 请求体超 `MAX_REQUEST_BODY_BYTES` / 评估文件超 `MAX_EVAL_FILE_BYTES` |
-| CONFIG_NOT_READY | 503 | 无 Active Release / 默认 Model Config 不完整 |
+| CONFIG_NOT_READY | 503 | 无 Active Business Release / 默认 Managed Model 不完整 |
 | MODEL_TIMEOUT | 504 | Provider 超时（重试耗尽后） |
 | MODEL_RATE_LIMIT | 503 + `Retry-After` | **上游 Provider** 限流（重试耗尽后） |
 | SERVICE_BUSY | 503 + `Retry-After` | 本服务 Provider 并发队列等待超过 `PROVIDER_QUEUE_WAIT_TIMEOUT` |
@@ -76,11 +76,12 @@ HTTP 与 error_code 映射（Contract，不再“按网关约定”）：
 - `PUT /api/admin/config/draft`
 - `POST /api/admin/config/validate`
 - `POST /api/admin/config/prompt-preview`
-- `POST /api/admin/releases`（body 必填 `default_model_config_id`、`note`、`expected_draft_hash` 与必须显式出现但可为 null 的 `expected_active_release_id`；该 Model Config 必须 enabled；审阅后 Draft/Active 变化则 409；服务端基于当前 Draft 生成 Snapshot）
+- `GET /api/admin/config/publish-summary`（返回 Draft/Active 并发令牌和业务模块变更摘要）
+- `POST /api/admin/releases`（body 必填 `note`、`expected_draft_hash` 与必须显式出现但可为 null 的 `expected_active_release_id`；审阅后 Draft/Active 变化则 409；服务端基于当前 Draft 生成 Snapshot）
 - `GET /api/admin/releases`
 - `GET /api/admin/releases/{id}`
 - `POST /api/admin/releases/{id}/create-draft`
-- Model Config CRUD/version create endpoints
+- Managed Model 管理、连接验证、设为默认和启用/禁用 endpoints
 
 ### Debug/Trace
 
@@ -104,8 +105,8 @@ HTTP 与 error_code 映射（Contract，不再“按网关约定”）：
 至少返回/展示：
 
 - `service_ready`：与 `/ready` 同义，只检查服务面（进程、DB/基础依赖、Migration schema），不要求 Active Release；
-- `runtime_config_ready`：Active Release + default Model Config 完整且可加载；
-- `active_release_id/version/hash`、default model、最近 24h 摘要。
+- `runtime_config_ready`：Active Business Release + 默认 Managed Model 完整且可加载；
+- Active 业务版本、默认模型和最近 24h 摘要。面向产品的默认页面不展示 ID/Hash。
 
 无 Runtime 配置时 Admin 仍必须可访问；仅 Runtime analyze 返回 `CONFIG_NOT_READY`。
 
@@ -119,7 +120,7 @@ HTTP 与 error_code 映射（Contract，不再“按网关约定”）：
 - LLMStructuredIntentOutput
 - LLMRequest / LLMResponse / LLMAttempt
 - RuntimeConfigSnapshot
-- ModelConfigSnapshot
+- ManagedModelRuntimeSnapshot
 - TraceRecord
 - EvaluationRun/Result
 

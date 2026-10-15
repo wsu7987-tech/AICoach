@@ -32,6 +32,11 @@ export interface Example {
   intent?: string | null;
   enabled?: boolean;
 }
+export interface PromptTemplate {
+  system: string;
+  rules: string[];
+  include_examples: boolean;
+}
 export interface SlotDefinition {
   name: string;
   zh: string;
@@ -53,50 +58,24 @@ export interface DraftJson {
   slots: SlotDefinition[];
   enums: Record<string, EnumValueDefinition[]>;
   examples: Example[];
-  prompt_template: Record<string, unknown>;
+  prompt_template: PromptTemplate;
 }
 export interface Draft {
   draft_json: DraftJson | null;
   draft_hash: string | null;
   updated_at: string | null;
 }
-export interface ModelInput {
-  name: string;
-  version: string;
-  provider: string;
-  model: string;
-  base_url: string;
-  params_json: Record<string, unknown>;
-  timeout_seconds: number;
-  max_retries: number;
-  max_concurrency: number;
-  structured_output_mode: string;
-  credential_ref: string;
-}
-export interface ModelConfig extends ModelInput {
-  id: number;
-  enabled: boolean;
-  model_config_hash: string;
-}
 export interface Release {
   id: number;
   version: string;
   note: string;
-  default_model_config_id: number;
-  config_snapshot_hash: string;
-  model_config_hash: string;
-  release_fingerprint: string;
+  created_by: string;
   created_at: string;
   snapshot_json?: DraftJson;
 }
 export interface PublishSummary {
   draft_hash: string;
-  config_snapshot_hash: string;
   active_release_id: number | null;
-  default_model_config_id: number;
-  model_config_hash: string;
-  release_fingerprint: string;
-  model_changed: boolean;
   changes: { section: string; before: unknown; after: unknown }[];
 }
 export type PromptModule =
@@ -156,24 +135,14 @@ export const configApi = {
         ...(module === "enum" ? { enum_group: targetName } : {}),
       },
     ),
-  models: (offset = 0) =>
-    request<ModelConfig[]>(`/model-configs?limit=200&offset=${offset}`),
-  createModel: (body: ModelInput) =>
-    request<ModelConfig>("/model-configs", "POST", body),
-  disableModel: (id: number) =>
-    request<ModelConfig>(`/model-configs/${id}/disable`, "POST"),
   releases: (offset = 0) =>
     request<{ items: Release[]; active_release_id: number | null }>(
       `/releases?limit=20&offset=${offset}`,
     ),
   release: (id: number) => request<Release>(`/releases/${id}`),
-  summary: (id: number) =>
-    request<PublishSummary>(
-      `/config/publish-summary?default_model_config_id=${id}`,
-    ),
+  summary: () => request<PublishSummary>("/config/publish-summary"),
   publish: (summary: PublishSummary, note: string) =>
     request<Release>("/releases", "POST", {
-      default_model_config_id: summary.default_model_config_id,
       note,
       expected_draft_hash: summary.draft_hash,
       expected_active_release_id: summary.active_release_id,

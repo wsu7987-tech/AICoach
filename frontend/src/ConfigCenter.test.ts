@@ -18,7 +18,6 @@ const draft = (): Draft => ({
 });
 beforeEach(() => {
   vi.spyOn(configApi, "draft").mockResolvedValue(draft());
-  vi.spyOn(configApi, "models").mockResolvedValue([]);
   vi.spyOn(configApi, "releases").mockResolvedValue({
     items: [],
     active_release_id: null,

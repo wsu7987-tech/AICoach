@@ -15,13 +15,13 @@ class DebugAnalyzeInput(AdminRequest):
     text: str = Field(min_length=1, max_length=2000)
     context: dict[str, Any] = Field(default_factory=dict)
     release_id: int | None = Field(default=None, gt=0)
-    model_config_id: int | None = Field(default=None, gt=0)
+    model_uid: str | None = Field(default=None, pattern=r"^mdl_[a-f0-9]{64}$")
     repeat: Literal[1, 3, 5] = 1
 
 
 class ReplayInput(AdminRequest):
     mode: Literal["historical", "active"] = "historical"
-    model_config_id: int | None = Field(default=None, gt=0)
+    model_uid: str | None = Field(default=None, pattern=r"^mdl_[a-f0-9]{64}$")
     repeat: Literal[1, 3, 5] = 1
 
 

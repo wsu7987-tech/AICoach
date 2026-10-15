@@ -5,6 +5,7 @@ import { ElMessage } from "element-plus";
 import {
   analyzeIntent,
   getIntentLatencyAnalysis,
+  getIntentPrompt,
   IntentApiError,
   type IntentLatencyAnalysis,
   type IntentResult,
@@ -48,10 +49,17 @@ const error = ref("");
 const result = ref<IntentResult | null>(null);
 const elapsedMs = ref<number | null>(null);
 const resultModelLabel = ref("");
+const resultModelUid = ref("");
 const latencyAnalysis = ref<IntentLatencyAnalysis | null>(null);
 const latencyAnalysisLoading = ref(false);
 const latencyAnalysisError = ref("");
 const jsonCopied = ref(false);
+const promptDialogVisible = ref(false);
+const promptLoading = ref(false);
+const promptError = ref("");
+const promptText = ref("");
+const promptTruncated = ref(false);
+const promptCopied = ref(false);
 
 const enabledModels = computed(() =>
   models.value.filter((model) => model.enabled),
@@ -181,19 +189,28 @@ async function recognize() {
   result.value = null;
   elapsedMs.value = null;
   resultModelLabel.value = "";
+  resultModelUid.value = "";
   latencyAnalysis.value = null;
   latencyAnalysisError.value = "";
   latencyAnalysisLoading.value = false;
   jsonCopied.value = false;
+  promptDialogVisible.value = false;
+  promptLoading.value = false;
+  promptError.value = "";
+  promptText.value = "";
+  promptTruncated.value = false;
+  promptCopied.value = false;
   const started = performance.now();
   try {
+    const modelUid = selectedModelUid.value;
+    resultModelUid.value = modelUid;
     resultModelLabel.value = selectedModel.value
       ? `${selectedModel.value.display_name} · ${selectedModel.value.model_name}`
       : "";
     const recognized = await analyzeIntent({
       text: text.value,
       context: {},
-      model_uid: selectedModelUid.value,
+      model_uid: modelUid,
     });
     elapsedMs.value = Math.round(performance.now() - started);
     result.value = recognized;
@@ -202,7 +219,7 @@ async function recognize() {
     try {
       latencyAnalysis.value = await getIntentLatencyAnalysis(
         recognized.request_id,
-        selectedModelUid.value,
+        modelUid,
       );
     } catch {
       latencyAnalysisError.value = "服务端耗时明细暂不可用，已保留端到端用时。";
@@ -235,6 +252,45 @@ async function copyResultJson() {
     }, 1600);
   } catch {
     ElMessage.error("复制失败，请手动选择 JSON 内容");
+  }
+}
+
+async function openPrompt() {
+  if (!result.value || !resultModelUid.value) return;
+  promptDialogVisible.value = true;
+  promptCopied.value = false;
+  if (promptText.value) return;
+  promptLoading.value = true;
+  promptError.value = "";
+  try {
+    const prompt = await getIntentPrompt(
+      result.value.request_id,
+      resultModelUid.value,
+    );
+    promptText.value = prompt.final_prompt;
+    promptTruncated.value = prompt.truncated;
+  } catch (value) {
+    promptError.value =
+      value instanceof IntentApiError
+        ? value.message
+        : value instanceof Error
+          ? value.message
+          : "提示词加载失败，请稍后重试";
+  } finally {
+    promptLoading.value = false;
+  }
+}
+
+async function copyPrompt() {
+  if (!promptText.value) return;
+  try {
+    await navigator.clipboard.writeText(promptText.value);
+    promptCopied.value = true;
+    window.setTimeout(() => {
+      promptCopied.value = false;
+    }, 1600);
+  } catch {
+    ElMessage.error("复制失败，请手动选择提示词内容");
   }
 }
 
@@ -348,7 +404,12 @@ onMounted(() => void loadModels());
               <span v-if="elapsedMs !== null"> · {{ elapsedMs }} ms</span>
             </p>
           </div>
-          <el-tag v-if="result" type="success" effect="plain">识别完成</el-tag>
+          <div v-if="result" class="result-heading-actions">
+            <el-button size="small" plain @click="openPrompt">
+              查看发送提示词
+            </el-button>
+            <el-tag type="success" effect="plain">识别完成</el-tag>
+          </div>
         </div>
 
         <div v-if="recognizing" class="result-state">
@@ -549,5 +610,46 @@ onMounted(() => void loadModels());
         </div>
       </section>
     </div>
+
+    <el-dialog
+      v-model="promptDialogVisible"
+      title="本次发送提示词"
+      width="min(920px, 92vw)"
+      class="intent-prompt-dialog"
+    >
+      <p class="prompt-dialog-description">
+        来自本次模型调用记录，按实际发送顺序展示；敏感内容会自动脱敏。
+      </p>
+      <div v-if="promptLoading" class="prompt-dialog-state">
+        正在读取提示词…
+      </div>
+      <el-alert
+        v-else-if="promptError"
+        :title="promptError"
+        type="error"
+        show-icon
+        :closable="false"
+      />
+      <template v-else>
+        <el-alert
+          v-if="promptTruncated"
+          title="提示词超过调用记录保存上限，以下内容已截断。"
+          type="warning"
+          show-icon
+          :closable="false"
+        />
+        <pre class="intent-prompt-content">{{ promptText }}</pre>
+      </template>
+      <template #footer>
+        <el-button @click="promptDialogVisible = false">关闭</el-button>
+        <el-button
+          type="primary"
+          :disabled="!promptText"
+          @click="copyPrompt"
+        >
+          {{ promptCopied ? "已复制" : "复制提示词" }}
+        </el-button>
+      </template>
+    </el-dialog>
   </section>
 </template>

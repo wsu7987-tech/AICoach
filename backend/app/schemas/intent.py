@@ -11,7 +11,7 @@ import hashlib
 import json
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 type RouteKey = str
 
@@ -405,10 +405,19 @@ class ExampleDefinition(ContractModel):
     intent: str | None = Field(default=None, min_length=1)
     enabled: bool = True
 
+    @field_validator("text")
+    @classmethod
+    def text_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("example text must not be blank")
+        return value
+
 
 class PromptTemplate(ContractModel):
     system: str = Field(min_length=1)
     rules: list[str] = Field(default_factory=list)
+    include_examples: bool = True
 
     @field_validator("rules")
     @classmethod
@@ -476,6 +485,7 @@ class RuntimeConfigSnapshot(ContractModel):
 
         intents_by_name = {item.name: item for item in self.intents}
         route_name_set = set(route_names)
+        _ensure_unique([example.text for example in self.examples], "example texts")
         for intent in self.intents:
             if intent.route not in route_name_set:
                 raise ValueError(f"intent {intent.name} references unknown route {intent.route}")
@@ -518,34 +528,6 @@ def validate_runtime_config_snapshot(
 def _ensure_unique(values: list[str], label: str) -> None:
     if len(values) != len(set(values)):
         raise ValueError(f"{label} must be unique")
-
-
-class ModelConfigSnapshot(ContractModel):
-    """Non-secret, immutable model settings frozen with a release/run."""
-
-    id: int = Field(gt=0)
-    name: str = Field(min_length=1)
-    version: str = Field(min_length=1)
-    provider: str = Field(min_length=1)
-    model: str = Field(min_length=1)
-    base_url: str = Field(min_length=1)
-    params_json: dict[str, Any] = Field(
-        default_factory=dict,
-        validation_alias=AliasChoices("params_json", "params"),
-    )
-    timeout_seconds: float = Field(gt=0)
-    max_retries: int = Field(ge=0)
-    max_concurrency: int = Field(gt=0)
-    structured_output_mode: Literal["json_schema", "json_object"]
-    credential_ref: str = Field(min_length=1)
-    model_config_hash: str = Field(min_length=64, max_length=64)
-    enabled: bool = True
-
-    @model_validator(mode="after")
-    def structured_output_does_not_send_max_tokens(self) -> ModelConfigSnapshot:
-        if self.params_json.get("max_tokens") is not None:
-            raise ValueError("max_tokens must be null or omitted for structured output")
-        return self
 
 
 class PromptMessage(ContractModel):

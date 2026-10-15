@@ -8,7 +8,6 @@ snapshot may cross into Trace persistence.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -16,7 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.errors import ErrorCode
 from app.db.models import ManagedModel, ProviderCredential, RuntimeModelState
-from app.providers.qwen import ProviderError
+from app.providers.openai_compatible import ProviderError
 from app.schemas.managed_model import ManagedModelRuntimeSnapshot
 from app.security.credentials import CredentialCipher
 from app.services.managed_model_service import decrypt_model_credential
@@ -52,11 +51,9 @@ class DatabaseManagedModelLoader:
         self,
         session_factory: async_sessionmaker,
         cipher: CredentialCipher,
-        legacy_credential_resolver: Callable[[str], str],
     ) -> None:
         self._sessions = session_factory
         self._cipher = cipher
-        self._legacy_credentials = legacy_credential_resolver
 
     async def load(self, model_uid: str | None) -> ResolvedManagedModel:
         async with self._sessions() as session:
@@ -90,24 +87,15 @@ class DatabaseManagedModelLoader:
                         503,
                     )
 
-            credential = (
-                await session.get(ProviderCredential, row.credential_id)
-                if row.credential_id is not None
-                else None
-            )
+            credential = await session.get(ProviderCredential, row.credential_id)
             try:
-                if credential is not None:
-                    api_key = decrypt_model_credential(self._cipher, credential)
-                    revision_source = (
-                        f"{credential.credential_uid}:"
-                        f"{credential.updated_at.isoformat(timespec='microseconds')}"
-                    )
-                elif row.credential_ref:
-                    api_key = self._legacy_credentials(row.credential_ref)
-                    revision_source = f"legacy:{row.credential_ref}:{api_key}"
-                else:
-                    api_key = ""
-                    revision_source = "missing"
+                if credential is None:
+                    raise ValueError("missing credential")
+                api_key = decrypt_model_credential(self._cipher, credential)
+                revision_source = (
+                    f"{credential.credential_uid}:"
+                    f"{credential.updated_at.isoformat(timespec='microseconds')}"
+                )
             except Exception:
                 # Credential exception text can contain deployment details. The
                 # public and Trace-facing error stays intentionally generic.

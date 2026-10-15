@@ -1,5 +1,4 @@
 import logging
-import os
 import time
 from contextlib import asynccontextmanager
 from uuid import uuid4
@@ -61,22 +60,20 @@ def create_app(
     try:
         credential_cipher = CredentialCipher(app_settings.credential_encryption_key)
     except CredentialConfigurationError:
-        # Refuse to start with a malformed configured key. An absent key remains
-        # compatible with legacy ENV credentials; new credential writes fail closed.
+        # Refuse to start with a malformed configured key. An absent key may keep
+        # Admin available, but credential writes and Runtime decryption fail closed.
         raise
     database = Database(app_settings) if app_settings.database_url else None
     provider_factory: ModelProviderFactory | None = None
+    managed_model_loader: DatabaseManagedModelLoader | None = None
     intent_service: IntentService | None = None
     if database is not None:
-
-        def credential_resolver(reference: str) -> str:
-            # The DB stores an environment/secret reference, never the secret.
-            if reference == "QWEN_API_KEY":
-                return app_settings.qwen_api_key or ""
-            return os.getenv(reference, "")
-
         provider_factory = ModelProviderFactory(
-            credential_resolver, queue_wait_timeout=app_settings.provider_queue_wait_timeout
+            queue_wait_timeout=app_settings.provider_queue_wait_timeout
+        )
+        managed_model_loader = DatabaseManagedModelLoader(
+            database.session_factory,
+            credential_cipher,
         )
         intent_service = IntentService(
             DatabaseBusinessConfigLoader(
@@ -85,11 +82,7 @@ def create_app(
             provider_factory,
             PromptBuilder(),
             DatabaseTraceStore(database.session_factory),
-            DatabaseManagedModelLoader(
-                database.session_factory,
-                credential_cipher,
-                credential_resolver,
-            ),
+            managed_model_loader,
         )
     checker = readiness_checker or ReadinessChecker()
     if readiness_checker is None:
@@ -123,6 +116,7 @@ def create_app(
     app.state.readiness_checker = checker
     app.state.intent_service = intent_service
     app.state.provider_factory = provider_factory
+    app.state.managed_model_loader = managed_model_loader
     app.state.credential_cipher = credential_cipher
 
     @app.middleware("http")

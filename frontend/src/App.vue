@@ -55,7 +55,7 @@ const configDirectories: {
 const configDirectNavigation: NavigationItem[] = [
   { path: "/config/examples", label: "样例管理" },
   { path: "/config/prompt", label: "提示词管理" },
-  { path: "/config/releases", label: "发布管理" },
+  { path: "/config/releases", label: "配置发布" },
 ];
 
 const systemNavigation: NavigationItem[] = [

@@ -13,15 +13,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from app.core.diagnostics import bounded_validation_issues, diagnostic_text, error_summary, sanitize
 from app.core.errors import AppError, ErrorCode
 from app.prompting.builder import PromptBuilder
-from app.providers.factory import (
-    ModelProviderFactory,
-    configuration_error,
-    verify_managed_provider,
-    verify_provider,
-)
-from app.providers.qwen import ProviderError
+from app.providers.factory import ModelProviderFactory, configuration_error, verify_managed_provider
+from app.providers.openai_compatible import ProviderError
 from app.providers.types import LLMAttempt, LLMProvider, ProviderCancelledError, diagnostic_attempts
-from app.schemas.config import business_snapshot, release_fingerprint, verified_model_snapshot
+from app.schemas.config import business_snapshot
 from app.schemas.intent import (
     BusinessOutputValidationError,
     IntentAnalyzeRequest,
@@ -29,7 +24,6 @@ from app.schemas.intent import (
     IntentResultV2,
     LLMRecognitionOutput,
     LLMRecognitionOutputV2,
-    ModelConfigSnapshot,
     OutputValidationIssue,
     RuntimeConfigSnapshot,
     validate_recognition_output,
@@ -46,45 +40,6 @@ logger = logging.getLogger(__name__)
 CANCEL_TRACE_TIMEOUT_SECONDS = 0.1
 
 
-class RuntimeConfiguration(BaseModel):
-    """The immutable inputs required by one runtime execution."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    snapshot: RuntimeConfigSnapshot
-    model_config_snapshot: ModelConfigSnapshot
-    release_id: int = Field(gt=0)
-    config_snapshot_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
-    model_config_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
-    release_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
-
-    @model_validator(mode="after")
-    def verify_provenance(self) -> RuntimeConfiguration:
-        payload, digest = business_snapshot(self.snapshot)
-        model = verified_model_snapshot(self.model_config_snapshot)
-        if (
-            digest != self.config_snapshot_hash
-            or model.model_config_hash != self.model_config_hash
-            or release_fingerprint(digest, model.id, model.model_config_hash)
-            != self.release_fingerprint
-        ):
-            raise ValueError("Release provenance mismatch")
-        self.snapshot = RuntimeConfigSnapshot.model_validate(payload)
-        self.model_config_snapshot = model
-        return self
-
-    @classmethod
-    def from_release(cls, release: dict[str, Any]) -> RuntimeConfiguration:
-        return cls(
-            snapshot=release["snapshot_json"],
-            model_config_snapshot=release["model_config_snapshot"],
-            release_id=release["id"],
-            config_snapshot_hash=release["config_snapshot_hash"],
-            model_config_hash=release["model_config_hash"],
-            release_fingerprint=release["release_fingerprint"],
-        )
-
-
 class BusinessRuntimeConfiguration(BaseModel):
     """Active Release business inputs, independent from the execution model."""
 
@@ -93,7 +48,6 @@ class BusinessRuntimeConfiguration(BaseModel):
     snapshot: RuntimeConfigSnapshot
     release_id: int = Field(gt=0)
     config_snapshot_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
-    release_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
 
     @model_validator(mode="after")
     def verify_business_provenance(self) -> BusinessRuntimeConfiguration:
@@ -105,18 +59,17 @@ class BusinessRuntimeConfiguration(BaseModel):
 
     @classmethod
     def from_verified_release(cls, release: dict[str, Any]) -> BusinessRuntimeConfiguration:
-        """Build from config_service.release_configuration after full legacy integrity checks."""
+        """Build from a business-only immutable release."""
 
         return cls(
             snapshot=release["snapshot_json"],
             release_id=release["id"],
             config_snapshot_hash=release["config_snapshot_hash"],
-            release_fingerprint=release["release_fingerprint"],
         )
 
 
 class RuntimeConfigLoader(Protocol):
-    async def load(self) -> RuntimeConfiguration | BusinessRuntimeConfiguration: ...
+    async def load(self) -> BusinessRuntimeConfiguration: ...
 
 
 class ManagedModelLoader(Protocol):
@@ -134,12 +87,8 @@ class TraceRecord(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
     source: str = "runtime"
     parent_trace_id: str | None = None
-    model_config_id: int | None = None
     release_id: int | None = None
     config_snapshot_hash: str | None = None
-    model_config_hash: str | None = None
-    release_fingerprint: str | None = None
-    model_config_snapshot: dict[str, Any] | None = None
     managed_model_snapshot: dict[str, Any] | None = None
     attempts: list[LLMAttempt] = Field(default_factory=list)
     validation_issues: list[OutputValidationIssue] = Field(default_factory=list)
@@ -191,20 +140,15 @@ class IntentServiceError(AppError):
 class InMemoryRuntimeConfigLoader:
     """Test-only loader with synthetic release identity; no DB/TTL loader here."""
 
-    def __init__(self, snapshot: RuntimeConfigSnapshot, model_config: ModelConfigSnapshot) -> None:
+    def __init__(self, snapshot: RuntimeConfigSnapshot) -> None:
         _, digest = business_snapshot(snapshot)
-        self._configuration = RuntimeConfiguration(
+        self._configuration = BusinessRuntimeConfiguration(
             snapshot=snapshot,
-            model_config_snapshot=model_config,
             release_id=1,
             config_snapshot_hash=digest,
-            model_config_hash=model_config.model_config_hash,
-            release_fingerprint=release_fingerprint(
-                digest, model_config.id, model_config.model_config_hash
-            ),
         )
 
-    async def load(self) -> RuntimeConfiguration:
+    async def load(self) -> BusinessRuntimeConfiguration:
         return self._configuration
 
 
@@ -264,19 +208,13 @@ class IntentService:
                 loaded = await self._config_loader.load()
                 # A loader may return a mutated Pydantic instance. Never trust it
                 # or retain references that another request can change.
-                if self._managed_model_loader is None:
-                    config: RuntimeConfiguration | BusinessRuntimeConfiguration = (
-                        RuntimeConfiguration.model_validate(loaded.model_dump(mode="json"))
-                    )
-                else:
-                    config = BusinessRuntimeConfiguration.model_validate(
-                        loaded.model_dump(mode="json")
-                    )
+                config = BusinessRuntimeConfiguration.model_validate(
+                    loaded.model_dump(mode="json")
+                )
             except ValueError:
                 raise configuration_error() from None
             trace.release_id = config.release_id
             trace.config_snapshot_hash = config.config_snapshot_hash
-            trace.release_fingerprint = config.release_fingerprint
             if self._managed_model_loader is not None:
                 if not isinstance(self._provider, ModelProviderFactory):
                     raise configuration_error()
@@ -289,17 +227,9 @@ class IntentService:
                 )
                 verify_managed_provider(provider, resolved.snapshot)
             else:
-                if not isinstance(config, RuntimeConfiguration):
+                if isinstance(self._provider, ModelProviderFactory):
                     raise configuration_error()
-                trace.model_config_id = config.model_config_snapshot.id
-                trace.model_config_hash = config.model_config_hash
-                trace.model_config_snapshot = config.model_config_snapshot.model_dump(mode="json")
-                provider = (
-                    self._provider.resolve(config.model_config_snapshot)
-                    if isinstance(self._provider, ModelProviderFactory)
-                    else self._provider
-                )
-                verify_provider(provider, config.model_config_snapshot)
+                provider = self._provider
             program_enum_slots = extract_enum_slots(request.text, config.snapshot)
             prompt = self._prompt_builder.build(
                 config.snapshot,

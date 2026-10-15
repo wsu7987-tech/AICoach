@@ -40,28 +40,6 @@ class ConfigDraft(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(fsp=6), nullable=False, default=_utc_now)
 
 
-class ModelConfig(Base):
-    __tablename__ = "model_config"
-    __table_args__ = (UniqueConstraint("name", "version", name="uq_model_config_name_version"),)
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(128), nullable=False)
-    version: Mapped[str] = mapped_column(String(64), nullable=False)
-    provider: Mapped[str] = mapped_column(String(64), nullable=False)
-    model: Mapped[str] = mapped_column(String(256), nullable=False)
-    base_url: Mapped[str] = mapped_column(String(2048), nullable=False)
-    params_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
-    timeout_seconds: Mapped[float] = mapped_column(Double, nullable=False)
-    max_retries: Mapped[int] = mapped_column(Integer, nullable=False)
-    max_concurrency: Mapped[int] = mapped_column(Integer, nullable=False)
-    structured_output_mode: Mapped[str] = mapped_column(String(32), nullable=False)
-    credential_ref: Mapped[str] = mapped_column(String(255), nullable=False)
-    model_config_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("1"))
-    immutable_from_at: Mapped[datetime | None] = mapped_column(DateTime(fsp=6), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(fsp=6), nullable=False, default=_utc_now)
-
-
 class ProviderCredential(Base):
     """Encrypted single-secret credential owned by one managed model."""
 
@@ -91,13 +69,12 @@ class ManagedModel(Base):
     provider: Mapped[str] = mapped_column(String(64), nullable=False)
     model_name: Mapped[str] = mapped_column(String(256), nullable=False)
     base_url: Mapped[str] = mapped_column(String(2048), nullable=False)
-    credential_id: Mapped[int | None] = mapped_column(
+    credential_id: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("provider_credential.id", ondelete="RESTRICT"),
-        nullable=True,
+        nullable=False,
         unique=True,
     )
-    credential_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     params_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
     timeout_seconds: Mapped[float] = mapped_column(Double, nullable=False)
     max_retries: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -131,11 +108,6 @@ class ConfigRelease(Base):
     version: Mapped[str] = mapped_column(String(64), nullable=False)
     snapshot_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
     config_snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    default_model_config_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("model_config.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
-    model_config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    release_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     note: Mapped[str] = mapped_column(Text, nullable=False)
     created_by: Mapped[str] = mapped_column(String(128), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(fsp=6), nullable=False, default=_utc_now)
@@ -145,22 +117,6 @@ class ConfigRelease(Base):
 @event.listens_for(ConfigRelease, "before_delete")
 def reject_release_mutation(mapper, connection, target):
     raise ValueError("historical release is immutable")
-
-
-@event.listens_for(ModelConfig, "before_update")
-def reject_model_parameter_mutation(mapper, connection, target):
-    # All versions are append-only from creation, even before their first use.
-    # Lifecycle flags remain mutable; the service guards active-release disable.
-    state = inspect(target)
-    for attribute in state.mapper.column_attrs:
-        if attribute.key not in {"enabled", "immutable_from_at"}:
-            if state.attrs[attribute.key].history.has_changes():
-                raise ValueError("model config parameters are immutable; create a new version")
-
-
-@event.listens_for(ModelConfig, "before_delete")
-def reject_model_deletion(mapper, connection, target):
-    raise ValueError("model config is immutable; disable instead")
 
 
 @event.listens_for(ManagedModel, "before_update")
@@ -193,8 +149,8 @@ class IntentRequestTrace(Base):
         Index("ix_intent_request_trace_status_created_at", "status", "created_at"),
         Index("ix_intent_request_trace_release_id_created_at", "release_id", "created_at"),
         Index(
-            "ix_intent_request_trace_model_config_created_at",
-            "effective_model_config_id",
+            "ix_intent_request_trace_managed_model_created_at",
+            "managed_model_uid",
             "created_at",
         ),
     )
@@ -210,14 +166,8 @@ class IntentRequestTrace(Base):
         BigInteger, ForeignKey("config_release.id", ondelete="SET NULL"), nullable=True, index=True
     )
     config_snapshot_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    release_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    effective_model_config_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("model_config.id", ondelete="SET NULL"), nullable=True, index=True
-    )
-    model_config_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    model_config_snapshot_json: Mapped[dict[str, object] | None] = mapped_column(
-        JSON, nullable=True
-    )
+    managed_model_uid: Mapped[str | None] = mapped_column(String(69), nullable=True, index=True)
+    managed_model_snapshot_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     final_route: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     final_result_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     reason_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -316,12 +266,8 @@ class EvaluationRun(Base):
         BigInteger, ForeignKey("config_release.id", ondelete="SET NULL"), nullable=True, index=True
     )
     config_snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    release_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
-    effective_model_config_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("model_config.id", ondelete="SET NULL"), nullable=True, index=True
-    )
-    model_config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    model_config_snapshot_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    managed_model_uid: Mapped[str] = mapped_column(String(69), nullable=False, index=True)
+    managed_model_snapshot_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
     repeat_count: Mapped[int] = mapped_column(Integer, nullable=False)
     worker_concurrency: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)

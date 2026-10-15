@@ -6,7 +6,7 @@
 |---|---|---|
 | TASK-102 execution gate | CONDITIONAL PASS | 最终独立结论见 TASK-102_FINAL_INDEPENDENT_REVIEW.md；允许 TASK-201；P2-2 在 TASK-103 DB Trace 接入前必须关闭 |
 | TASK-001 工程骨架与API边界 | ✅ | 已完成；包管理已迁移到 uv |
-| TASK-002 MySQL、Migration与Bootstrap | ✅ | MySQL 8.0.32；独立 Review 通过；`release_fingerprint` 已去 UNIQUE；`/ready` 做全表全列检查（当前 head：9 表 / 126 列，仅参考值） |
+| TASK-002 MySQL、Migration与Bootstrap | ✅ | MySQL 8.0.32；`/ready` 根据 ORM 与 Alembic 当前 head 动态检查全表全列；旧 Release fingerprint 设计已由 0005 迁移取代。 |
 | TASK-101 Intent Contract与PromptBuilder | ✅ | PASS；TASK-201 继续复用 Snapshot 校验及纯 PromptBuilder |
 | TASK-102 Qwen Provider与IntentService | CONDITIONAL PASS | P1 已关闭；P2-2 validation_issues.slot.value 限长/脱敏已由 TASK-103 真实 MySQL Trace 复测关闭，P2-1 Provider Error 耦合仍保留；REAL_QWEN_SMOKE=UNVERIFIED |
 | TASK-201 在线配置与Release | ✅ | 最终独立复核 PASS，且 TASK-102/201 interface gate PASS；见 TASK-201_FINAL_INCREMENTAL_REVIEW.md。 |
@@ -15,7 +15,8 @@
 | TASK-301 批量评测闭环 | ⬜ | |
 | TASK-401 生产部署与主系统接入 | ⬜ | |
 | TASK-501 自动化测试与E2E验收 | ⬜ | |
-| vNext Step 1 模型管理重构 | 🚧 修正完成，待定向测试 | 已移除用户侧 Provider/Qwen 限制，改为 Base URL + API Key + Model Name 的通用 OpenAI-compatible 接入；尚未执行本轮修正后的定向测试。 |
+| vNext Step 1 模型管理重构 | 🚧 实现完成，待迁移与定向测试 | 已改为 Base URL + API Key + Model Name 的通用 OpenAI-compatible 接入；业务 Release 已与模型解耦，旧 ModelConfig 及兼容支路由破坏性迁移删除；迁移和测试尚未执行。 |
+| 配置发布页面优化 | ✅ | 页面改为业务发布流程，隐藏 Hash、数据库 ID 和原始 JSON，版本详情只展示业务摘要。 |
 | Route/Intent 配置中心优化 | ✅ | Route 支持新增/编辑；Intent 改为按 Route 分组的主从编辑器，支持典型说法与 Prompt 配置片段预览；详见 `docs/Route与Intent配置中心实施说明.md`。 |
 
 ## 待确认事项

@@ -88,12 +88,8 @@ class DatabaseTraceStore:
             context_json=_json(trace.context),
             release_id=trace.release_id,
             config_snapshot_hash=trace.config_snapshot_hash,
-            release_fingerprint=trace.release_fingerprint,
-            effective_model_config_id=trace.model_config_id,
-            model_config_hash=trace.model_config_hash,
-            model_config_snapshot_json=_json(
-                trace.managed_model_snapshot or trace.model_config_snapshot
-            ),
+            managed_model_uid=(trace.managed_model_snapshot or {}).get("model_uid"),
+            managed_model_snapshot_json=_json(trace.managed_model_snapshot),
             final_route=(trace.final_result or {}).get("route"),
             final_result_json=_json(trace.final_result),
             reason_summary=diagnostic_text(trace.reason_summary) if trace.reason_summary else None,

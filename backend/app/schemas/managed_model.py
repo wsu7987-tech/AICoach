@@ -161,10 +161,8 @@ class ManagedModelList(BaseModel):
 class ManagedModelRuntimeSnapshot(BaseModel):
     """Secret-free settings for one concrete ManagedModel invocation.
 
-    This is deliberately a different contract from the historical
-    ``ModelConfigSnapshot`` frozen into a ConfigRelease.  Runtime traces may
-    persist this value, but credentials and credential identifiers never enter
-    the snapshot.
+    Runtime traces may persist this value, but credentials and credential
+    identifiers never enter the snapshot.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

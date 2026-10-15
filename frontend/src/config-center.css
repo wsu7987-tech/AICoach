@@ -141,6 +141,43 @@
   gap: 10px;
   margin: 16px 0 12px;
 }
+.example-prompt-state {
+  margin: 4px 0 14px;
+}
+.example-toolbar {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) 230px 150px;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.example-text {
+  color: #263247;
+  font-weight: 500;
+  line-height: 1.55;
+}
+.example-form-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 6px;
+  padding: 13px 14px;
+  border: 1px solid #e5eaf1;
+  border-radius: 7px;
+  background: #f8fafc;
+}
+.example-form-status > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.example-form-status strong {
+  color: #344054;
+  font-size: 13px;
+}
+.example-form-status small {
+  color: #667085;
+}
 .result-count {
   color: #7b8494;
   font-size: 12px;
@@ -459,19 +496,6 @@
   display: grid;
   gap: 12px;
 }
-.diff-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-.json-view {
-  background: #f4f7fb;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  padding: 10px;
-  max-height: 55vh;
-  overflow: auto;
-}
 .prompt-view {
   margin: 0;
   padding: 18px 20px;
@@ -485,9 +509,412 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.hash {
-  overflow-wrap: anywhere;
-  font-family: monospace;
+.prompt-editor-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 32%);
+  align-items: start;
+  gap: 16px;
+  margin-top: 18px;
+}
+.prompt-editor-main {
+  display: grid;
+  gap: 14px;
+}
+.prompt-config-card,
+.prompt-composition-card,
+.prompt-preview-workbench {
+  border: 1px solid #e1e6ef;
+  border-radius: 9px;
+  background: #fff;
+}
+.prompt-config-card {
+  padding: 18px;
+}
+.prompt-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.prompt-card-heading > div,
+.preview-workbench-copy {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+}
+.prompt-card-heading h3,
+.prompt-composition-card h3,
+.prompt-preview-workbench h3 {
+  margin: 0 0 5px;
+  color: #263247;
+  font-size: 15px;
+}
+.prompt-card-heading p,
+.prompt-composition-card > p,
+.prompt-preview-workbench p,
+.field-guidance,
+.composition-note p {
+  margin: 0;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.prompt-step {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: #eaf2ff;
+  color: #2f6fdd;
+  font-size: 11px;
+  font-weight: 700;
+}
+.field-counter {
+  flex: none;
+  color: #8a94a6;
+  font-size: 11px;
+}
+.prompt-config-card textarea {
+  font-family: inherit;
+  line-height: 1.7;
+}
+.field-guidance {
+  margin-top: 8px;
+}
+.prompt-rule-list {
+  display: grid;
+  gap: 8px;
+}
+.prompt-rule-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid #e5eaf1;
+  border-radius: 7px;
+  background: #fbfcfe;
+}
+.prompt-rule-row.has-error {
+  border-color: #e89a9a;
+  background: #fff8f8;
+}
+.rule-index {
+  color: #718096;
+  font: 600 12px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-align: center;
+}
+.rule-actions {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+.rule-actions .el-button + .el-button {
+  margin-left: 4px;
+}
+.prompt-rule-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #dce2eb;
+}
+.prompt-composition-card {
+  position: sticky;
+  top: 12px;
+  padding: 18px;
+  background: #f8fafc;
+}
+.prompt-composition-card h3 {
+  margin-top: 5px;
+}
+.prompt-composition-card ul {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+  padding: 0;
+  list-style: none;
+}
+.prompt-composition-card li {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid #e1e8f2;
+  border-radius: 7px;
+  background: #fff;
+}
+.prompt-composition-card li > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.prompt-composition-card li.is-disabled {
+  border-style: dashed;
+  background: #f3f4f6;
+  opacity: 0.72;
+}
+.prompt-composition-card li.is-disabled .composition-check {
+  color: #8a94a6;
+}
+.prompt-composition-card li strong,
+.composition-note strong {
+  color: #344054;
+  font-size: 12px;
+}
+.composition-check {
+  color: #2f8f5b;
+  font-weight: 700;
+}
+.composition-note {
+  padding: 11px 12px;
+  border-left: 3px solid #d29b3f;
+  border-radius: 4px;
+  background: #fff9ec;
+}
+.composition-note p {
+  margin-top: 4px;
+}
+.prompt-preview-workbench {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.85fr) minmax(340px, 1.15fr);
+  align-items: center;
+  gap: 18px;
+  margin-top: 16px;
+  padding: 18px;
+  background: #f7faff;
+}
+.preview-workbench-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.preview-disabled-tip {
+  grid-column: 2;
+  color: #b36a00 !important;
+}
+.release-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+.release-status-card {
+  display: flex;
+  min-height: 104px;
+  flex-direction: column;
+  gap: 7px;
+  padding: 16px;
+  border: 1px solid #e1e7ef;
+  border-radius: 9px;
+  background: #fff;
+}
+.release-status-card > span,
+.release-detail-heading span,
+.release-detail-meta dt,
+.release-detail-grid span {
+  color: #7b8494;
+  font-size: 12px;
+}
+.release-status-card > strong {
+  color: #263247;
+  font-size: 17px;
+}
+.release-status-card > small {
+  color: #667085;
+  line-height: 1.55;
+}
+.release-flow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid #e5eaf1;
+  border-radius: 9px;
+  background: #f8fafc;
+}
+.release-flow-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.release-flow-step > span {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #e5e9f0;
+  color: #667085;
+  font-weight: 700;
+}
+.release-flow-step.done > span {
+  background: #def3e7;
+  color: #25784a;
+}
+.release-flow-step div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.release-flow-step strong {
+  color: #344054;
+  font-size: 13px;
+}
+.release-flow-step small {
+  color: #7b8494;
+  line-height: 1.45;
+}
+.release-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 16px 0 22px;
+  border-bottom: 1px solid #edf0f5;
+}
+.release-actions .el-button + .el-button {
+  margin-left: 0;
+}
+.release-actions small {
+  flex-basis: 100%;
+  color: #9a6700;
+}
+.release-history-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin: 22px 0 12px;
+}
+.release-history-heading h3 {
+  margin: 0 0 5px;
+  color: #263247;
+  font-size: 16px;
+}
+.release-history-heading p {
+  margin: 0;
+  color: #667085;
+  font-size: 12px;
+}
+.release-version-cell {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.release-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 14px;
+  color: #667085;
+  font-size: 13px;
+}
+.release-detail {
+  display: grid;
+  gap: 18px;
+}
+.release-detail-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #edf0f5;
+}
+.release-detail-heading > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.release-detail-heading strong {
+  color: #263247;
+  font-size: 20px;
+}
+.release-detail-meta {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+.release-detail-meta > div {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 12px;
+}
+.release-detail-meta dd {
+  margin: 0;
+  color: #344054;
+  white-space: pre-wrap;
+}
+.release-detail-section h4 {
+  margin: 0 0 10px;
+  color: #344054;
+}
+.release-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.release-detail-grid article {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 7px;
+  background: #f7f9fc;
+}
+.release-detail-grid strong {
+  color: #344054;
+}
+.publish-confirm-copy {
+  display: grid;
+  gap: 18px;
+}
+.publish-confirm-copy > p {
+  margin: 0;
+  color: #667085;
+  line-height: 1.65;
+}
+.publish-change-summary {
+  padding: 14px 16px;
+  border: 1px solid #e1e7ef;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.publish-change-summary > strong {
+  color: #344054;
+}
+.publish-change-summary ul {
+  display: grid;
+  gap: 7px;
+  margin: 10px 0 0;
+  padding-left: 20px;
+  color: #475467;
+}
+.publish-change-summary p {
+  margin: 8px 0 0;
+  color: #667085;
+}
+.publish-note-field {
+  display: grid;
+  gap: 8px;
+}
+.publish-note-field > span {
+  color: #344054;
+  font-weight: 600;
+}
+.publish-note-field em {
+  color: #d14343;
+  font-size: 12px;
+  font-style: normal;
 }
 .config-center textarea {
   font-family: ui-monospace, monospace;
@@ -499,11 +926,14 @@
   display: block;
 }
 @media (max-width: 900px) {
-  .diff-grid,
   .intent-manager,
   .intent-form-grid,
   .enum-manager,
-  .dialog-form-grid {
+  .prompt-editor-layout,
+  .prompt-preview-workbench,
+  .dialog-form-grid,
+  .release-status-grid,
+  .release-flow {
     grid-template-columns: 1fr;
   }
   .metric-grid {
@@ -513,6 +943,9 @@
     grid-template-columns: 1fr;
   }
   .manager-toolbar {
+    grid-template-columns: 1fr;
+  }
+  .example-toolbar {
     grid-template-columns: 1fr;
   }
   .config-page-intro,
@@ -536,5 +969,25 @@
   }
   .wide-field {
     grid-column: auto;
+  }
+  .prompt-composition-card {
+    position: static;
+  }
+  .preview-disabled-tip {
+    grid-column: 1;
+  }
+  .prompt-rule-row {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+  .rule-actions {
+    grid-column: 2;
+    justify-content: flex-end;
+  }
+  .prompt-rule-add,
+  .preview-workbench-action {
+    grid-template-columns: 1fr;
+  }
+  .release-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

@@ -10,25 +10,19 @@ from __future__ import annotations
 import copy
 from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
 
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ConfigDraft, ConfigRelease, ModelConfig, RuntimeState
+from app.db.models import ConfigDraft, ConfigRelease, RuntimeState
 from app.prompting.builder import PromptBuilder
 from app.schemas.config import (
-    MODEL_RUNTIME_FIELDS,
-    ModelConfigCreate,
     PublishInput,
     business_snapshot,
-    model_hash,
-    release_fingerprint,
 )
 from app.schemas.intent import (
-    ModelConfigSnapshot,
     PromptBuildResult,
     RuntimeConfigSnapshot,
     sha256_canonical,
@@ -196,72 +190,10 @@ async def preview_prompt_module(
     raise ConfigError("INVALID_INPUT", "模块预览缺少对应的目标名称", 422)
 
 
-def effective_model_snapshot(row: ModelConfig) -> ModelConfigSnapshot:
-    """TASK-102/103 boundary; metadata is excluded from the independently checked hash.
-
-    Does not reject disabled versions: frozen historical consumers may use them.
-    New selections must check enabled separately.
-    """
-    try:
-        fields = {key: getattr(row, key) for key in MODEL_RUNTIME_FIELDS}
-        config = ModelConfigCreate(name=row.name, version=row.version, **fields)
-        if model_hash(config) != row.model_config_hash:
-            raise ConfigError("CONFIG_CORRUPT", "Model Config Hash 不一致", 409)
-        return ModelConfigSnapshot(
-            id=row.id,
-            **config.model_dump(mode="json"),
-            enabled=row.enabled,
-            model_config_hash=row.model_config_hash,
-        )
-    except ValidationError:
-        raise ConfigError("CONFIG_CORRUPT", "Model Config 参数无效", 409) from None
-
-
-async def create_model(session: AsyncSession, config: ModelConfigCreate) -> ModelConfigSnapshot:
-    config = ModelConfigCreate.model_validate(config.model_dump(mode="json"))
-    await lock_state(session)
-    existing = await session.scalar(
-        select(ModelConfig.id).where(
-            ModelConfig.name == config.name, ModelConfig.version == config.version
-        )
-    )
-    if existing is not None:
-        raise ConfigError("MODEL_VERSION_CONFLICT", "同名版本已存在，请创建新版本")
-    row = ModelConfig(
-        **config.model_dump(mode="json"), model_config_hash=model_hash(config), enabled=True
-    )
-    session.add(row)
-    await session.flush()
-    return effective_model_snapshot(row)
-
-
-async def disable_model(session: AsyncSession, model_id: int) -> ModelConfigSnapshot:
-    state = await lock_state(session)
-    row = await session.get(ModelConfig, model_id, with_for_update=True)
-    if row is None:
-        raise ConfigError("MODEL_NOT_FOUND", "Model Config 不存在", 404)
-    release = (
-        await session.get(ConfigRelease, state.active_release_id)
-        if state.active_release_id
-        else None
-    )
-    if release and release.default_model_config_id == model_id:
-        raise ConfigError(
-            "MODEL_ACTIVE", "Active Release 正在引用该版本，请先发布使用其他模型的新 Release"
-        )
-    row.enabled = False
-    await session.flush()
-    return effective_model_snapshot(row)
-
-
 def release_view(row: ConfigRelease, *, detail: bool = True) -> dict[str, Any]:
     fields = (
         "id",
         "version",
-        "config_snapshot_hash",
-        "default_model_config_id",
-        "model_config_hash",
-        "release_fingerprint",
         "note",
         "created_by",
         "created_at",
@@ -280,36 +212,21 @@ async def require_release(session: AsyncSession, release_id: int) -> ConfigRelea
 
 
 async def release_configuration(session: AsyncSession, release_id: int) -> dict[str, Any]:
-    """Validated immutable inputs for the later TTL loader/trace integration."""
+    """Return one validated, immutable business configuration release."""
     release = await require_release(session, release_id)
     payload, digest = validate_business(release.snapshot_json)
-    row = await session.get(ModelConfig, release.default_model_config_id)
-    if row is None:
-        raise ConfigError("CONFIG_CORRUPT", "Release Model Config 不存在")
-    model = effective_model_snapshot(row)
-    if (
-        digest != release.config_snapshot_hash
-        or model.model_config_hash != release.model_config_hash
-        or release_fingerprint(digest, model.id, model.model_config_hash)
-        != release.release_fingerprint
-    ):
-        raise ConfigError("CONFIG_CORRUPT", "Release Hash/Fingerprint 不一致")
+    if digest != release.config_snapshot_hash:
+        raise ConfigError("CONFIG_CORRUPT", "配置版本内容校验失败")
     return {
         **release_view(release),
+        "config_snapshot_hash": release.config_snapshot_hash,
         "snapshot_json": payload,
-        "model_config_snapshot": model.model_dump(mode="json"),
     }
 
 
-async def publish_summary(session: AsyncSession, model_id: int) -> dict[str, Any]:
+async def publish_summary(session: AsyncSession) -> dict[str, Any]:
     row = await require_draft(session)
-    payload, digest = validate_business(row.draft_json)
-    model = await session.get(ModelConfig, model_id)
-    if model is None:
-        raise ConfigError("MODEL_NOT_FOUND", "请选择已有 Model Config", 404)
-    if not model.enabled:
-        raise ConfigError("MODEL_DISABLED", "已禁用版本不能用于新发布")
-    frozen = effective_model_snapshot(model)
+    payload, _ = validate_business(row.draft_json)
     state = await session.get(RuntimeState, 1)
     active = (
         await session.get(ConfigRelease, state.active_release_id)
@@ -324,12 +241,7 @@ async def publish_summary(session: AsyncSession, model_id: int) -> dict[str, Any
     ]
     return {
         "draft_hash": sha256_canonical(row.draft_json),
-        "config_snapshot_hash": digest,
         "active_release_id": active.id if active else None,
-        "default_model_config_id": model_id,
-        "model_config_hash": frozen.model_config_hash,
-        "release_fingerprint": release_fingerprint(digest, model_id, frozen.model_config_hash),
-        "model_changed": active is None or active.default_model_config_id != model_id,
         "changes": changes,
     }
 
@@ -349,28 +261,17 @@ async def publish(session: AsyncSession, request: PublishInput) -> dict[str, Any
     if request.expected_active_release_id != state.active_release_id:
         raise ConfigError("RELEASE_CONFLICT", "Active Release 已变化，请重新查看发布摘要")
     payload, digest = validate_business(draft.draft_json)
-    model = await session.get(
-        ModelConfig, request.default_model_config_id, with_for_update=True, populate_existing=True
-    )
-    if model is None:
-        raise ConfigError("MODEL_NOT_FOUND", "Model Config 不存在", 404)
-    if not model.enabled:
-        raise ConfigError("MODEL_DISABLED", "已禁用版本不能用于新发布")
-    frozen = effective_model_snapshot(model)
+    release_count = await session.scalar(select(func.count(ConfigRelease.id))) or 0
     release = ConfigRelease(
-        version=f"release-{uuid4().hex}",
+        version=f"config-v{release_count + 1}",
         snapshot_json=payload,
         config_snapshot_hash=digest,
-        default_model_config_id=model.id,
-        model_config_hash=frozen.model_config_hash,
-        release_fingerprint=release_fingerprint(digest, model.id, frozen.model_config_hash),
         note=request.note,
         created_by="admin",
     )
     session.add(release)
     await session.flush()
-    # The release insert, freeze marker and active pointer share the caller's transaction.
-    model.immutable_from_at = model.immutable_from_at or now()
+    # The immutable release insert and active pointer share one transaction.
     state.active_release_id, state.updated_at = release.id, now()
     await session.flush()
     return release_view(release)

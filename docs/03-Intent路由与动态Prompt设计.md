@@ -98,12 +98,12 @@ Pydantic LLMStructuredIntentOutput
 
 ## 6. Model Config 语义
 
-Model Config 独立版本化，至少包含：
+Managed Model 独立于业务配置发布，至少包含：
 
 - provider
 - model
 - base_url 配置引用/非 secret 地址
-- credential_ref（仅引用后端/K8s Secret，不存真实 Key）
+- credential_id（关联应用层加密保存的 Provider Credential）
 - temperature
 - max_tokens
 - timeout_seconds
@@ -112,24 +112,20 @@ Model Config 独立版本化，至少包含：
 - structured_output_mode
 - enabled
 
-已被 Release/Trace/Evaluation 使用的 Model Config 不原地修改。
-
-> vNext 兼容说明：以上是 v1.2.5 历史 `ModelConfig` Contract，继续保留且不迁移。新的产品层
-> `managed_model` 使用稳定 `model_uid`，Credential 独立加密存储，显示名称/API Key/调用参数可按
-> `tasks/AICoach_模型管理与意图识别运行逻辑设计.md` 更新；不得改写历史 ModelConfig/Release。
+模型身份字段不原地修改；Trace/Evaluation 保存每次实际使用的 ManagedModel 非 Secret 快照。
+旧 `ModelConfig` Contract 与 ENV Credential 兼容路径已移除。
 
 Disable 语义：
-- Active Release 正在引用的 Model Config 禁止 disable；先发布并激活使用其他 Model Config 的新 Release。
-- 正在运行的 Evaluation 使用创建 Run 时冻结的 Model Config snapshot；之后 disable 不影响该 Run。
-- disabled Model Config 不允许用于新的 Release、Debug override 或 Evaluation override。
-- 历史 Trace/Replay 仍可读取其 immutable snapshot。
-- 一期不物理删除已被 Release/Trace/Evaluation 引用的 Model Config。
+- 默认 ManagedModel 禁止直接 disable，必须先设置其他默认模型；
+- 正在运行的 Evaluation 使用创建 Run 时冻结的 ManagedModel snapshot；之后 disable 不影响该 Run；
+- disabled ManagedModel 不允许用于新 Runtime、Debug 或 Evaluation 调用；
+- 历史 Trace/Replay 读取其非 Secret snapshot；一期不物理删除 ManagedModel。
 
-Runtime：只使用 Active Release 指定的 `default_model_config_id`。
+Runtime：业务规则使用 Active Release；模型使用请求的 `model_uid`，未指定时使用 Runtime 默认模型。
 
-Admin Debug/Evaluation：可选 `model_config_id` override；未指定时使用 Release 默认值。
+Admin Debug/Evaluation：可选 `model_uid` override；未指定时使用 Runtime 默认模型。
 
-Trace 必须记录最终 effective model config id + snapshot。
+Trace 必须记录最终 `managed_model_uid` + 非 Secret snapshot。
 
 当 `structured_output_mode` 为 `json_schema` / `json_object` 时，`max_tokens` 必须为空并且 Provider 不发送该参数；这是 Qwen Structured Output 的兼容性约束。
 
@@ -145,11 +141,18 @@ Business Config Snapshot 只包含业务配置：
   "slots": [],
   "enums": {},
   "examples": [],
-  "prompt_template": {}
+  "prompt_template": {
+    "system": "...",
+    "rules": [],
+    "include_examples": true
+  }
 }
 ```
 
-`default_model_config_id` 是 Release 的独立字段，不进入 Business Snapshot。
+`include_examples=false` 时保留 Examples 数据，但 PromptBuilder 不向 Route 或 Intent 模块
+注入典型说法；重新开启后继续使用已启用的样例。
+
+Release 不包含任何模型字段；模型选择不进入 Business Snapshot，也不参与业务配置发布。
 
 ### Bootstrap / Draft 顶层 Schema
 
@@ -162,12 +165,8 @@ schema_version / routes / intents / slots / enums / examples / prompt_template
 固定 7 Route Contract 属于代码/API Contract，不作为 Bootstrap 额外顶层字段重复存储；调研状态、审批状态等元数据也不得进入 Draft/Snapshot/hash。导入时应 `extra=forbid` 或等价严格校验，禁止静默丢弃未知顶层字段。
 
 
-```text
-config_snapshot_hash = SHA256(canonical business snapshot)
-release_fingerprint = SHA256(config_snapshot_hash + default_model_config_id + immutable model_config_hash)
-```
-
-历史 Business Snapshot、Model Config snapshot 与 Release fingerprint 均不可变。Trace 必须记录 `release_id / config_snapshot_hash / release_fingerprint / effective_model_config_id / model_config_hash / model_config_snapshot`。
+`config_snapshot_hash = SHA256(canonical business snapshot)` 仅用于服务端完整性校验。
+历史 Business Snapshot 不可变。Trace 记录 `release_id / config_snapshot_hash / managed_model_uid / managed_model_snapshot`。
 
 ## 8. 训练业务规则
 

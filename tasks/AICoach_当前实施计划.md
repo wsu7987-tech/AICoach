@@ -16,7 +16,7 @@
   - Enum / Alias 管理
 - 样例管理
 - 提示词管理
-- 发布管理
+- 配置发布
 
 有多个子页面的目录可以展开、收起；只有一个页面时不再套一层目录。
 
@@ -67,6 +67,8 @@
 - 可选期望 Intent。
 - Intent 只能选择当前 Route 下的 Intent。
 - 支持启用和禁用。
+- 使用结构化表格、搜索和筛选，不直接编辑 JSON。
+- Route 级样例辅助一级分类；Intent 级样例辅助二级分类。
 
 ### 提示词管理
 
@@ -74,10 +76,11 @@
 
 - 编辑 System Prompt。
 - 逐条编辑规则。
+- 可以统一开启或关闭“在最终 Prompt 中使用典型说法”；关闭不会删除样例数据。
 - 输入一句测试文本，查看最终生成的 Prompt。
-- 页面说明最终 Prompt 会自动带上 Route、Intent、文本 Slot 和样例；枚举词典由程序使用，不进入 Prompt。
+- 页面说明最终 Prompt 会自动带上 Route、Intent、文本 Slot 和可选样例；枚举词典由程序使用，不进入 Prompt。
 
-### 发布管理
+### 配置发布
 
 把编辑中的配置正式发布。
 
@@ -86,6 +89,8 @@
 - 填写发布说明并发布。
 - 查看当前生效版本和历史版本。
 - 可以从历史版本重新创建 Draft。
+- 业务配置版本与模型选择相互独立；切换默认模型不需要重新发布业务配置。
+- 默认不显示数据库 ID、Hash、Fingerprint 或原始 JSON。
 
 ## 页面统一要求
 
@@ -104,15 +109,18 @@
 4. 完成样例管理页面。
 5. 完成提示词管理和 Prompt 预览。
 6. 完成 Draft 保存、校验和错误定位。
-7. 完成发布管理和历史版本。
+7. 完成配置发布和历史版本。
 8. 用户验收配置中心。
 9. 完善意图识别结果页。
 10. 整理调用观测页。
 
-## 不在本次修改
+## 本轮已确认的架构调整
 
 - 不改变 7 个 Route。
 - 不改变 IntentResult、Slot、Risk、Clarification。
-- 不改数据库结构。
-- 不改历史 Release 和 ModelConfig 语义。
-- 如果发布页面必须修改现有 Release Contract，先申请审批。
+- Release 只保存业务配置快照，不再绑定模型。
+- 模型选择由 `managed_model + runtime_model_state` 独立负责。
+- 删除旧 `model_config` 表及其 API、Provider 和运行时兼容路径。
+- 不兼容旧历史：迁移时清理旧 Release、Trace、Evaluation 等依赖旧 ModelConfig
+  语义的数据；保留业务 Draft 和使用加密凭据的 ManagedModel。
+- 迁移不可逆，执行前应由部署方自行确认是否需要数据库备份。

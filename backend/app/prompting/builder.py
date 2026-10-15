@@ -202,8 +202,21 @@ def _active_examples(snapshot: RuntimeConfigSnapshot):
 
 def _render_routes(snapshot: RuntimeConfigSnapshot) -> str:
     lines = ["## 可选 Route", "", "从以下 Route 中选择一个：", ""]
+    examples = (
+        _active_examples(snapshot)
+        if snapshot.prompt_template.include_examples
+        else []
+    )
     for route in _active_routes(snapshot):
         lines.append(f"- {route.name}：{route.description}")
+        route_examples = [
+            item.text
+            for item in examples
+            if item.route == route.name and item.intent is None
+        ]
+        if route_examples:
+            lines.append("  典型说法：")
+            lines.extend(f"  - {text}" for text in route_examples)
     return "\n".join(lines)
 
 
@@ -214,7 +227,11 @@ def _render_intents(
     intents = _active_intents(snapshot)
     if intent_name is not None:
         intents = [intent for intent in intents if intent.name == intent_name]
-    examples = _active_examples(snapshot)
+    examples = (
+        _active_examples(snapshot)
+        if snapshot.prompt_template.include_examples
+        else []
+    )
     lines = ["## 二级 Intent"]
     for route in _active_routes(snapshot):
         route_intents = [intent for intent in intents if intent.route == route.name]

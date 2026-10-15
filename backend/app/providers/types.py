@@ -9,8 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.diagnostics import diagnostic_payload, diagnostic_text, error_summary, sanitize
 from app.core.errors import ErrorCode
+from app.schemas.intent import PromptBuildResult
 from app.schemas.managed_model import ManagedModelRuntimeSnapshot
-from app.schemas.intent import ModelConfigSnapshot, PromptBuildResult
 
 
 class ProviderModel(BaseModel):
@@ -83,6 +83,6 @@ class ProviderCancelledError(asyncio.CancelledError):
 
 class LLMProvider(Protocol):
     @property
-    def model_config(self) -> ModelConfigSnapshot | ManagedModelRuntimeSnapshot: ...
+    def runtime_snapshot(self) -> ManagedModelRuntimeSnapshot: ...
 
     async def invoke(self, prompt: PromptBuildResult) -> LLMResponse: ...

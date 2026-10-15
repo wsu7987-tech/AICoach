@@ -51,6 +51,13 @@
   font-size: 14px;
 }
 
+.result-heading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .field-label {
   display: block;
   margin: 13px 0 6px;
@@ -544,6 +551,38 @@
   color: #344b78;
   font-size: 12px;
   line-height: 1.55;
+}
+
+.prompt-dialog-description {
+  margin: -4px 0 14px;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.prompt-dialog-state {
+  display: grid;
+  min-height: 180px;
+  place-items: center;
+  color: #718096;
+  font-size: 13px;
+}
+
+.intent-prompt-content {
+  max-height: 62vh;
+  overflow: auto;
+  margin: 12px 0 0;
+  padding: 16px 18px;
+  border: 1px solid #26364f;
+  border-radius: 7px;
+  background: #172033;
+  color: #dbe8ff;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  tab-size: 2;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 960px) {

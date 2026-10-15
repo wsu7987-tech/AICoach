@@ -17,7 +17,6 @@ import {
   type DraftJson,
   type Example,
   type Intent,
-  type ModelConfig,
   type PublishSummary,
   type Release,
   type Route,
@@ -25,6 +24,7 @@ import {
   type SlotDefinition,
   type EnumValueDefinition,
   type PromptModule,
+  type PromptTemplate,
 } from "./configApi";
 
 const props = defineProps<{ section?: string }>();
@@ -43,15 +43,17 @@ const intents = ref<Intent[]>([]);
 const slots = ref<SlotDefinition[]>([]);
 const enumGroups = ref<Record<string, EnumValueDefinition[]>>({});
 const examples = ref<Example[]>([]);
-const editors = reactive({
-  examples: "[]",
-  prompt_template: "{}",
+const promptTemplate = reactive<PromptTemplate>({
+  system: "",
+  rules: [],
+  include_examples: true,
 });
-const models = ref<ModelConfig[]>([]);
+const newPromptRule = ref("");
 const releases = ref<Release[]>([]);
 const releaseOffset = ref(0);
 const activeId = ref<number | null>(null);
-const selectedModel = ref<number>();
+const activeRelease = ref<Release | null>(null);
+const validationPassed = ref(false);
 const message = ref("");
 const error = ref("");
 const issues = ref<FieldIssue[]>([]);
@@ -64,13 +66,146 @@ const confirmVisible = ref(false);
 const note = ref("");
 const detail = ref<Release>();
 const detailVisible = ref(false);
-const pretty = (value: unknown) => JSON.stringify(value, null, 2);
 const isPromptConfigSection = computed(
   () => props.section === "routes" || props.section === "intents",
 );
 const isParameterSection = computed(
   () => props.section === "slots" || props.section === "enums",
 );
+const isPromptTemplateSection = computed(() => props.section === "prompt");
+const isReleaseSection = computed(() => props.section === "releases");
+
+const sectionLabels: Record<string, string> = {
+  routes: "Route",
+  intents: "Intent",
+  slots: "Slot",
+  enums: "Enum / Alias",
+  examples: "典型说法",
+  prompt_template: "提示词",
+  schema_version: "配置结构",
+};
+
+function changeDescription(change: PublishSummary["changes"][number]) {
+  const label = sectionLabels[change.section] ?? change.section;
+  if (Array.isArray(change.before) && Array.isArray(change.after))
+    return `${label}：${change.before.length} 项 → ${change.after.length} 项`;
+  if (
+    change.before &&
+    change.after &&
+    typeof change.before === "object" &&
+    typeof change.after === "object"
+  )
+    return `${label}：内容已调整`;
+  return `${label}：已修改`;
+}
+
+const releaseDetailSections = computed(() => {
+  const snapshot = detail.value?.snapshot_json;
+  if (!snapshot) return [];
+  return [
+    { label: "Route", value: `${snapshot.routes.length} 项` },
+    { label: "Intent", value: `${snapshot.intents.length} 项` },
+    { label: "Slot", value: `${snapshot.slots.length} 项` },
+    { label: "Enum / Alias", value: `${Object.keys(snapshot.enums).length} 组` },
+    {
+      label: "典型说法",
+      value: `${snapshot.examples.length} 条${
+        snapshot.prompt_template.include_examples === false
+          ? "（未注入 Prompt）"
+          : ""
+      }`,
+    },
+    {
+      label: "提示词规则",
+      value: `${snapshot.prompt_template.rules.length} 条`,
+    },
+  ];
+});
+
+function formatLocalTime(value: string) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+const promptComposition = computed(() => [
+  {
+    label: "Route 定义",
+    detail: `${routes.value.filter((route) => route.enabled).length} 个已启用 Route`,
+  },
+  {
+    label: "Intent 定义",
+    detail: `${intents.value.filter((intent) => intent.enabled).length} 个已启用 Intent`,
+    enabled: true,
+  },
+  {
+    label: "典型说法",
+    detail: promptTemplate.include_examples
+      ? `${examples.value.filter((example) => example.enabled !== false).length} 条已启用样例`
+      : "已关闭，不写入最终 Prompt",
+    enabled: promptTemplate.include_examples,
+  },
+  {
+    label: "文本型 Slot",
+    detail: `${slots.value.filter((slot) => slot.enabled && slot.value_type === "string").length} 个由模型提取`,
+    enabled: true,
+  },
+  {
+    label: "输出格式",
+    detail: "系统自动生成 JSON Schema 和标准示例",
+    enabled: true,
+  },
+]);
+
+type ExampleRow = { item: Example; index: number };
+const exampleSearch = ref("");
+const exampleRouteFilter = ref("");
+const exampleStatusFilter = ref<"" | "enabled" | "disabled">("");
+const exampleDialogVisible = ref(false);
+const editingExampleIndex = ref<number | null>(null);
+const exampleForm = reactive<Example>({
+  text: "",
+  route: "",
+  intent: null,
+  enabled: true,
+});
+
+const exampleIntentOptions = computed(() =>
+  intents.value.filter((intent) => intent.route === exampleForm.route),
+);
+
+const filteredExamples = computed<ExampleRow[]>(() => {
+  const query = exampleSearch.value.trim().toLowerCase();
+  return examples.value
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => {
+      const intent = intents.value.find((value) => value.name === item.intent);
+      const route = routes.value.find((value) => value.name === item.route);
+      const matchesQuery =
+        !query ||
+        `${item.text} ${item.route} ${route?.zh ?? ""} ${item.intent ?? ""} ${intent?.zh ?? ""}`
+          .toLowerCase()
+          .includes(query);
+      const matchesRoute =
+        !exampleRouteFilter.value || item.route === exampleRouteFilter.value;
+      const enabled = item.enabled !== false;
+      const matchesStatus =
+        !exampleStatusFilter.value ||
+        (exampleStatusFilter.value === "enabled" ? enabled : !enabled);
+      return matchesQuery && matchesRoute && matchesStatus;
+    });
+});
+
+const exampleStats = computed(() => ({
+  total: examples.value.length,
+  enabled: examples.value.filter((example) => example.enabled !== false).length,
+  intent: examples.value.filter((example) => example.intent).length,
+  routeOnly: examples.value.filter((example) => !example.intent).length,
+}));
 
 const routeDialogVisible = ref(false);
 const editingRouteName = ref<string | null>(null);
@@ -248,6 +383,17 @@ watch(selectedIntentName, (name) => {
   });
 });
 
+watch(
+  () => props.section,
+  (section) => {
+    if (section !== "intents" || !selectedIntentName.value) return;
+    const intent = intents.value.find(
+      (item) => item.name === selectedIntentName.value,
+    );
+    if (intent) selectIntent(intent);
+  },
+);
+
 async function run(action: () => Promise<void>) {
   if (busy.value) return;
   busy.value = true;
@@ -289,9 +435,20 @@ function acceptDraft(value: Draft) {
       if (!Object.prototype.hasOwnProperty.call(enumGroups.value, parentName))
         enumGroups.value[parentName] = [];
     }
-    examples.value = structuredClone(value.draft_json.examples);
-    for (const key of Object.keys(editors) as (keyof typeof editors)[])
-      editors[key] = pretty(value.draft_json[key]);
+    examples.value = structuredClone(value.draft_json.examples).map((example) => ({
+      ...example,
+      intent: example.intent ?? null,
+      enabled: example.enabled !== false,
+    }));
+    promptTemplate.system = value.draft_json.prompt_template.system;
+    promptTemplate.include_examples =
+      value.draft_json.prompt_template.include_examples ?? true;
+    promptTemplate.rules.splice(
+      0,
+      promptTemplate.rules.length,
+      ...value.draft_json.prompt_template.rules,
+    );
+    newPromptRule.value = "";
     if (
       !selectedEnumGroup.value ||
       !Object.prototype.hasOwnProperty.call(
@@ -308,6 +465,7 @@ function acceptDraft(value: Draft) {
     if (selected) selectIntent(selected);
   }
   dirty.value = false;
+  validationPassed.value = false;
   summary.value = undefined;
 }
 function draftPayload(): DraftJson {
@@ -317,15 +475,52 @@ function draftPayload(): DraftJson {
     intents: intents.value,
     slots: slots.value,
     enums: enumGroups.value,
+    examples: examples.value,
+    prompt_template: normalizedPromptTemplate(),
   };
-  for (const key of Object.keys(editors) as (keyof typeof editors)[]) {
-    try {
-      result[key] = JSON.parse(editors[key]);
-    } catch {
-      throw new Error(`${key}：JSON 格式错误，请检查引号、逗号和括号`);
-    }
-  }
   return result as unknown as DraftJson;
+}
+
+function normalizedPromptTemplate(): PromptTemplate {
+  const system = promptTemplate.system;
+  const rules = [...promptTemplate.rules];
+  if (!system.trim()) throw new Error("System Prompt 不能为空");
+  if (rules.some((rule) => !rule.trim())) throw new Error("识别规则不能为空");
+  const normalizedRules = rules.map((rule) => rule.trim());
+  const duplicate = normalizedRules.find(
+    (rule, index) => normalizedRules.indexOf(rule) !== index,
+  );
+  if (duplicate) throw new Error(`识别规则重复：${duplicate}`);
+  return {
+    system,
+    rules,
+    include_examples: promptTemplate.include_examples,
+  };
+}
+
+function addPromptRule() {
+  applyLocal(() => {
+    const rule = newPromptRule.value.trim();
+    if (!rule) throw new Error("请输入规则内容");
+    if (promptTemplate.rules.some((item) => item.trim() === rule))
+      throw new Error("这条规则已经存在");
+    promptTemplate.rules.push(rule);
+    newPromptRule.value = "";
+    markDirty();
+  });
+}
+
+function removePromptRule(index: number) {
+  promptTemplate.rules.splice(index, 1);
+  markDirty();
+}
+
+function movePromptRule(index: number, offset: -1 | 1) {
+  const target = index + offset;
+  if (target < 0 || target >= promptTemplate.rules.length) return;
+  const [rule] = promptTemplate.rules.splice(index, 1);
+  promptTemplate.rules.splice(target, 0, rule);
+  markDirty();
 }
 
 function markDirty() {
@@ -638,17 +833,107 @@ async function deleteEnumValue(value: EnumValueDefinition, index: number) {
   }
 }
 
-function parseExamplesEditor(): Example[] {
-  try {
-    return JSON.parse(editors.examples) as Example[];
-  } catch {
-    throw new Error("examples：JSON 格式错误，请检查引号、逗号和括号");
-  }
-}
-
 function updateExamples(next: Example[]) {
   examples.value = next;
-  editors.examples = pretty(next);
+}
+
+function exampleRouteLabel(routeName: string) {
+  const route = routes.value.find((item) => item.name === routeName);
+  return route ? `${route.zh}（${route.name}）` : routeName;
+}
+
+function exampleIntentLabel(intentName: string | null | undefined) {
+  if (!intentName) return "仅用于 Route 判断";
+  const intent = intents.value.find((item) => item.name === intentName);
+  return intent ? `${intent.zh}（${intent.name}）` : intentName;
+}
+
+function openNewExample() {
+  editingExampleIndex.value = null;
+  Object.assign(exampleForm, {
+    text: "",
+    route: exampleRouteFilter.value || routes.value[0]?.name || "",
+    intent: null,
+    enabled: true,
+  });
+  exampleDialogVisible.value = true;
+}
+
+function openExample(row: ExampleRow) {
+  editingExampleIndex.value = row.index;
+  Object.assign(exampleForm, {
+    text: row.item.text,
+    route: row.item.route,
+    intent: row.item.intent ?? null,
+    enabled: row.item.enabled !== false,
+  });
+  exampleDialogVisible.value = true;
+}
+
+function changeExampleRoute() {
+  if (
+    exampleForm.intent &&
+    !intents.value.some(
+      (intent) =>
+        intent.name === exampleForm.intent && intent.route === exampleForm.route,
+    )
+  )
+    exampleForm.intent = null;
+}
+
+function applyExampleForm() {
+  applyLocal(() => {
+    const text = exampleForm.text.trim();
+    const route = exampleForm.route;
+    const intent = exampleForm.intent || null;
+    if (!text || !route) throw new Error("用户说法和期望 Route 不能为空");
+    if (!routes.value.some((item) => item.name === route))
+      throw new Error(`Route ${route} 不存在`);
+    if (
+      intent &&
+      !intents.value.some(
+        (item) => item.name === intent && item.route === route,
+      )
+    )
+      throw new Error("期望 Intent 必须属于当前选择的 Route");
+    if (
+      examples.value.some(
+        (item, index) =>
+          index !== editingExampleIndex.value && item.text.trim() === text,
+      )
+    )
+      throw new Error(`典型说法“${text}”已存在，不能配置多个期望结果`);
+
+    const next: Example = {
+      text,
+      route,
+      intent,
+      enabled: exampleForm.enabled !== false,
+    };
+    if (editingExampleIndex.value === null) examples.value.push(next);
+    else examples.value[editingExampleIndex.value] = next;
+    exampleDialogVisible.value = false;
+    markDirty();
+  });
+}
+
+async function deleteExample(row: ExampleRow) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除典型说法“${row.item.text}”？`,
+      "删除典型说法",
+      {
+        type: "warning",
+        confirmButtonText: "确认删除",
+        cancelButtonText: "取消",
+      },
+    );
+    examples.value.splice(row.index, 1);
+    markDirty();
+  } catch (reason) {
+    if (reason !== "cancel" && reason !== "close")
+      error.value = reason instanceof Error ? reason.message : String(reason);
+  }
 }
 
 function applyLocal(action: () => void) {
@@ -696,7 +981,7 @@ function saveRouteForm() {
   )
     throw new Error(`Route 标识 ${name} 已存在`);
 
-  const nextExamples = parseExamplesEditor();
+  const nextExamples = examples.value;
   const next: Route = { name, zh, description, enabled: true };
   if (editingRouteName.value === null) routes.value.push(next);
   else {
@@ -762,7 +1047,7 @@ async function deleteRoute(route: Route) {
         (intent) => intent.route !== route.name,
       );
       updateExamples(
-        parseExamplesEditor().filter(
+        examples.value.filter(
           (example) =>
             example.route !== route.name &&
             (!example.intent || !removedIntentNames.has(example.intent)),
@@ -787,8 +1072,7 @@ async function deleteRoute(route: Route) {
 }
 
 function selectIntent(intent: Intent) {
-  const currentExamples = parseExamplesEditor();
-  examples.value = currentExamples;
+  const currentExamples = examples.value;
   selectedIntentName.value = intent.name;
   isNewIntent.value = false;
   Object.assign(intentForm, intent, {
@@ -881,6 +1165,29 @@ function saveIntentForm() {
     throw new Error(`Intent 标识 ${name} 已存在`);
 
   const oldName = selectedIntentName.value;
+  const existingIntentExamples = examples.value.filter(
+    (example) => example.intent === oldName || example.intent === name,
+  );
+  const retained = examples.value.filter(
+    (example) => example.intent !== oldName && example.intent !== name,
+  );
+  const utteranceTexts = [
+    ...new Set(intentForm.utterances.map((item) => item.trim())),
+  ].filter(Boolean);
+  const conflict = utteranceTexts.find((text) =>
+    retained.some((example) => example.text.trim() === text),
+  );
+  if (conflict)
+    throw new Error(`典型说法“${conflict}”已用于其他 Route 或 Intent`);
+  const utterances = utteranceTexts.map((text) => ({
+    text,
+    route,
+    intent: name,
+    enabled:
+      existingIntentExamples.find((example) => example.text.trim() === text)
+        ?.enabled !== false,
+  }));
+
   const next: Intent = {
     name,
     zh,
@@ -897,15 +1204,6 @@ function saveIntentForm() {
     const index = intents.value.findIndex((intent) => intent.name === oldName);
     if (index >= 0) intents.value[index] = next;
   }
-
-  const retained = parseExamplesEditor().filter(
-    (example) => example.intent !== oldName && example.intent !== name,
-  );
-  const utterances = [
-    ...new Set(intentForm.utterances.map((item) => item.trim())),
-  ]
-    .filter(Boolean)
-    .map((text) => ({ text, route, intent: name, enabled: true }));
   updateExamples([...retained, ...utterances]);
   selectedIntentName.value = name;
   isNewIntent.value = false;
@@ -932,7 +1230,7 @@ async function deleteIntent(intentName?: string | null) {
     await run(async () => {
       intents.value = intents.value.filter((intent) => intent.name !== name);
       updateExamples(
-        parseExamplesEditor().filter((example) => example.intent !== name),
+        examples.value.filter((example) => example.intent !== name),
       );
       dirty.value = true;
       if (deletingSelected) {
@@ -948,19 +1246,20 @@ async function deleteIntent(intentName?: string | null) {
       error.value = value instanceof Error ? value.message : String(value);
   }
 }
-async function loadModels() {
-  const rows: ModelConfig[] = [];
-  for (let offset = 0; ; offset += 200) {
-    const page = await configApi.models(offset);
-    rows.push(...page);
-    if (page.length < 200) break;
-  }
-  models.value = rows;
-}
 async function loadHistory() {
   const history = await configApi.releases(releaseOffset.value);
   releases.value = history.items;
   activeId.value = history.active_release_id;
+  if (history.active_release_id === null) {
+    activeRelease.value = null;
+  } else {
+    const activeInPage = history.items.find(
+      (release) => release.id === history.active_release_id,
+    );
+    if (activeInPage) activeRelease.value = activeInPage;
+    else if (activeRelease.value?.id !== history.active_release_id)
+      activeRelease.value = await configApi.release(history.active_release_id);
+  }
 }
 async function reload() {
   await run(async () => {
@@ -970,7 +1269,7 @@ async function reload() {
         "重新载入",
       );
     const value = await configApi.draft();
-    await Promise.all([loadModels(), loadHistory()]);
+    await loadHistory();
     acceptDraft(value);
     loaded.value = true;
   });
@@ -978,7 +1277,7 @@ async function reload() {
 async function save() {
   await run(async () => {
     acceptDraft(await configApi.save(draftPayload(), draft.value.draft_hash));
-    message.value = isParameterSection.value
+    message.value = isParameterSection.value || isPromptTemplateSection.value
       ? "配置草稿已保存，发布前不会影响线上识别"
       : "配置已保存";
   });
@@ -986,10 +1285,19 @@ async function save() {
 async function validate() {
   await run(async () => {
     await configApi.validate();
+    validationPassed.value = true;
     message.value = "校验通过：配置结构、名称和引用合法";
   });
 }
 async function showPreview() {
+  if (dirty.value) {
+    error.value = "请先保存到配置草稿，再生成最终 Prompt 预览";
+    return;
+  }
+  if (!previewText.value.trim()) {
+    error.value = "请输入用于生成 Prompt 的测试文本";
+    return;
+  }
   await run(async () => {
     const value = await configApi.preview(previewText.value);
     preview.value = value.final_prompt;
@@ -1039,14 +1347,12 @@ async function showModulePreview(
 async function importBootstrap() {
   await run(async () => {
     acceptDraft(await configApi.bootstrap(bootstrap as DraftJson));
-    message.value =
-      "Bootstrap 已导入 Draft，请确认业务配置后创建模型版本并发布";
+    message.value = "Bootstrap 已导入配置草稿，请确认业务配置后发布";
   });
 }
 async function preparePublish() {
   await run(async () => {
-    if (!selectedModel.value) throw new Error("请选择一个启用的 Model Config");
-    summary.value = await configApi.summary(selectedModel.value);
+    summary.value = await configApi.summary();
     note.value = "";
     confirmVisible.value = true;
   });
@@ -1058,7 +1364,8 @@ async function publish() {
     confirmVisible.value = false;
     releaseOffset.value = 0;
     await loadHistory();
-    message.value = `Release #${result.id} 已发布并激活`;
+    validationPassed.value = false;
+    message.value = `${result.version} 已发布并生效`;
   });
 }
 async function showRelease(row: Release) {
@@ -1070,11 +1377,11 @@ async function showRelease(row: Release) {
 async function restore(row: Release) {
   await run(async () => {
     await ElMessageBox.confirm(
-      `使用 Release #${row.id} 的历史配置替换当前 Draft？${dirty.value ? "本地未保存编辑会丢弃。" : ""}随后需重新发布才能生效。`,
-      "从历史 Release 创建 Draft",
+      `使用 ${row.version} 的历史配置替换当前配置草稿？${dirty.value ? "本地未保存编辑会丢弃。" : ""}随后需重新发布才能生效。`,
+      "基于历史版本恢复",
     );
     acceptDraft(await configApi.restore(row.id, draft.value.draft_hash));
-    message.value = `已从 Release #${row.id} 创建 Draft，请校验、预览并重新发布`;
+    message.value = `已基于 ${row.version} 创建配置草稿，请校验、预览并重新发布`;
   });
 }
 async function pageHistory(delta: number) {
@@ -1098,10 +1405,13 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
 
 <template>
   <section class="config-center" v-loading="busy">
-    <div v-if="!isPromptConfigSection" class="config-heading">
+    <div v-if="!isPromptConfigSection && !isReleaseSection" class="config-heading">
       <div>
         <p v-if="isParameterSection">
           页面编辑 → 保存到配置草稿 → 校验与预览 → 发布后线上生效
+        </p>
+        <p v-else-if="isPromptTemplateSection">
+          编辑任务说明与全局规则 → 保存到配置草稿 → 预览 → 发布后线上生效
         </p>
         <p v-else>编辑配置 → 校验 → Prompt 预览 → 应用配置</p>
       </div>
@@ -1129,7 +1439,7 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
     <el-alert
       v-if="dirty"
       :title="
-        isParameterSection
+        isParameterSection || isPromptTemplateSection
           ? '有页面修改尚未保存到配置草稿；当前修改不会影响线上识别。'
           : '有未保存修改，请先保存，再执行校验、预览或发布。'
       "
@@ -1147,24 +1457,30 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
       ></el-card
     >
     <div
-      v-if="draft.draft_json && !isPromptConfigSection"
+      v-if="draft.draft_json && !isPromptConfigSection && !isReleaseSection"
       class="toolbar"
     >
       <el-button type="primary" @click="save" :disabled="busy || !dirty"
-        >{{ isParameterSection ? "保存到配置草稿" : "保存配置" }}</el-button
+        >{{
+          isParameterSection || isPromptTemplateSection
+            ? "保存到配置草稿"
+            : "保存配置"
+        }}</el-button
       >
       <el-button @click="validate" :disabled="busy || dirty">校验</el-button>
-      <el-input
-        v-model="previewText"
-        aria-label="Prompt 预览输入"
-        placeholder="输入预览文本"
-        class="preview-input"
-      />
-      <el-button
-        @click="showPreview"
-        :disabled="busy || dirty || !previewText.trim()"
-        >Prompt 预览</el-button
-      >
+      <template v-if="!isPromptTemplateSection">
+        <el-input
+          v-model="previewText"
+          aria-label="Prompt 预览输入"
+          placeholder="输入预览文本"
+          class="preview-input"
+        />
+        <el-button
+          @click="showPreview"
+          :disabled="busy || dirty || !previewText.trim()"
+          >Prompt 预览</el-button
+        >
+      </template>
       <el-tag :type="dirty ? 'warning' : 'info'">{{
         dirty ? "未保存" : "配置已同步"
       }}</el-tag>
@@ -1715,81 +2031,415 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
       </section>
       <section v-else-if="section === 'examples'" class="config-editor">
         <template v-if="draft.draft_json">
-          <p>维护用于区分 Route 和 Intent 边界的 Few-shot 示例。</p>
-          <label for="examples-editor"
-            >Examples JSON（text / route / intent / enabled）</label
+          <div class="config-page-intro">
+            <div>
+              <span class="section-kicker">典型说法库</span>
+              <h2>用真实表达补充 Route 和 Intent 的判断边界</h2>
+              <p>
+                每条说法对应一个期望 Route，可选更具体的 Intent。这里只维护样例；是否把样例写入最终 Prompt，由提示词管理统一控制。
+              </p>
+            </div>
+            <el-button type="primary" @click="openNewExample">新增典型说法</el-button>
+          </div>
+
+          <div class="metric-grid" aria-label="典型说法概览">
+            <div class="metric-card">
+              <strong>{{ exampleStats.total }}</strong><span>全部说法</span>
+            </div>
+            <div class="metric-card">
+              <strong>{{ exampleStats.enabled }}</strong><span>已启用</span>
+            </div>
+            <div class="metric-card">
+              <strong>{{ exampleStats.intent }}</strong><span>Intent 样例</span>
+            </div>
+            <div class="metric-card">
+              <strong>{{ exampleStats.routeOnly }}</strong><span>仅 Route 样例</span>
+            </div>
+          </div>
+
+          <el-alert
+            :type="promptTemplate.include_examples ? 'success' : 'warning'"
+            :closable="false"
+            show-icon
+            class="example-prompt-state"
           >
-          <el-input
-            id="examples-editor"
-            v-model="editors.examples"
-            type="textarea"
-            :rows="22"
-            @input="dirty = true"
-          />
+            <template #title>
+              {{
+                promptTemplate.include_examples
+                  ? "已启用：发布后，启用状态的典型说法会进入最终 Prompt"
+                  : "已关闭：典型说法会继续保存，但不会进入最终 Prompt"
+              }}
+            </template>
+          </el-alert>
+
+          <div class="example-toolbar">
+            <el-input
+              v-model="exampleSearch"
+              clearable
+              placeholder="搜索用户说法、Route 或 Intent"
+              aria-label="搜索典型说法"
+            />
+            <el-select v-model="exampleRouteFilter" clearable placeholder="全部 Route">
+              <el-option
+                v-for="route in routes"
+                :key="route.name"
+                :label="`${route.zh}（${route.name}）`"
+                :value="route.name"
+              />
+            </el-select>
+            <el-select v-model="exampleStatusFilter" placeholder="全部状态">
+              <el-option label="全部状态" value="" />
+              <el-option label="已启用" value="enabled" />
+              <el-option label="已停用" value="disabled" />
+            </el-select>
+          </div>
+
+          <el-table :data="filteredExamples" row-key="index" class="example-table">
+            <el-table-column label="用户说法" min-width="260">
+              <template #default="{ row }">
+                <span class="example-text">{{ row.item.text }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="期望 Route" min-width="210">
+              <template #default="{ row }">
+                {{ exampleRouteLabel(row.item.route) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="期望 Intent" min-width="220">
+              <template #default="{ row }">
+                <span :class="{ 'muted-value': !row.item.intent }">
+                  {{ exampleIntentLabel(row.item.intent) }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="110">
+              <template #default="{ row }">
+                <el-switch
+                  v-model="row.item.enabled"
+                  inline-prompt
+                  active-text="启"
+                  inactive-text="停"
+                  @change="markDirty"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="140" align="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openExample(row)">编辑</el-button>
+                <el-button link type="danger" @click="deleteExample(row)">删除</el-button>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <el-empty description="没有符合条件的典型说法" :image-size="72">
+                <el-button type="primary" @click="openNewExample">新增第一条说法</el-button>
+              </el-empty>
+            </template>
+          </el-table>
         </template>
       </section>
       <section v-else-if="section === 'prompt'" class="config-editor">
         <template v-if="draft.draft_json">
-          <p>编辑 system 和 rules，预览完整 Prompt。</p>
-          <el-input
-            aria-label="Prompt Template JSON"
-            v-model="editors.prompt_template"
-            type="textarea"
-            :rows="22"
-            @input="dirty = true"
-          />
+          <div class="config-page-intro">
+            <div>
+              <span class="section-kicker">全局识别策略</span>
+              <h2>管理模型的任务说明和通用判断规则</h2>
+              <p>
+                这里只编辑所有请求共用的指令。Route、Intent、文本 Slot、可选典型说法和输出格式会由系统按配置自动拼装，无需复制到这里。
+              </p>
+            </div>
+          </div>
+
+          <div class="prompt-editor-layout">
+            <div class="prompt-editor-main">
+              <article class="prompt-config-card">
+                <header class="prompt-card-heading">
+                  <div>
+                    <span class="prompt-step">01</span>
+                    <div>
+                      <h3>System Prompt</h3>
+                      <p>定义模型身份、任务边界和不可执行的行为。</p>
+                    </div>
+                  </div>
+                  <span class="field-counter"
+                    >{{ promptTemplate.system.length }} 字</span
+                  >
+                </header>
+                <el-input
+                  v-model="promptTemplate.system"
+                  aria-label="System Prompt"
+                  type="textarea"
+                  :rows="8"
+                  placeholder="说明模型是谁、需要完成什么任务，以及不应执行什么操作"
+                  @input="markDirty"
+                />
+                <p class="field-guidance">
+                  建议只放长期稳定的总体要求；具体分类名称、业务说明和输出字段由系统维护。
+                </p>
+              </article>
+
+              <article class="prompt-config-card">
+                <header class="prompt-card-heading">
+                  <div>
+                    <span class="prompt-step">02</span>
+                    <div>
+                      <h3>识别规则</h3>
+                      <p>规则按当前顺序写入 Prompt，可直接调整优先顺序。</p>
+                    </div>
+                  </div>
+                  <el-tag type="info">{{ promptTemplate.rules.length }} 条</el-tag>
+                </header>
+
+                <div class="prompt-rule-list">
+                  <div
+                    v-for="(rule, index) in promptTemplate.rules"
+                    :key="index"
+                    class="prompt-rule-row"
+                    :class="{ 'has-error': !rule.trim() }"
+                  >
+                    <span class="rule-index">{{ index + 1 }}</span>
+                    <el-input
+                      v-model="promptTemplate.rules[index]"
+                      :aria-label="`识别规则 ${index + 1}`"
+                      type="textarea"
+                      :autosize="{ minRows: 1, maxRows: 4 }"
+                      @input="markDirty"
+                    />
+                    <div class="rule-actions">
+                      <el-button
+                        link
+                        :disabled="index === 0"
+                        @click="movePromptRule(index, -1)"
+                      >
+                        上移
+                      </el-button>
+                      <el-button
+                        link
+                        :disabled="index === promptTemplate.rules.length - 1"
+                        @click="movePromptRule(index, 1)"
+                      >
+                        下移
+                      </el-button>
+                      <el-button link type="danger" @click="removePromptRule(index)">
+                        删除
+                      </el-button>
+                    </div>
+                  </div>
+                  <el-empty
+                    v-if="!promptTemplate.rules.length"
+                    description="尚未配置通用识别规则"
+                    :image-size="64"
+                  />
+                </div>
+
+                <div class="prompt-rule-add">
+                  <el-input
+                    v-model="newPromptRule"
+                    aria-label="新增识别规则"
+                    placeholder="输入一条独立、可执行的判断规则"
+                    @keyup.enter="addPromptRule"
+                  />
+                  <el-button
+                    type="primary"
+                    plain
+                    :disabled="!newPromptRule.trim()"
+                    @click="addPromptRule"
+                  >
+                    添加规则
+                  </el-button>
+                </div>
+              </article>
+
+              <article class="prompt-config-card prompt-feature-toggle">
+                <header class="prompt-card-heading">
+                  <div>
+                    <span class="prompt-step">03</span>
+                    <div>
+                      <h3>在 Prompt 中使用典型说法</h3>
+                      <p>
+                        开启后，把样例管理中已启用的说法放到对应 Route 或 Intent 下，帮助模型理解分类边界。
+                      </p>
+                    </div>
+                  </div>
+                  <el-switch
+                    v-model="promptTemplate.include_examples"
+                    aria-label="在 Prompt 中使用典型说法"
+                    inline-prompt
+                    active-text="开"
+                    inactive-text="关"
+                    @change="markDirty"
+                  />
+                </header>
+                <el-alert
+                  :type="promptTemplate.include_examples ? 'success' : 'info'"
+                  :closable="false"
+                  :title="
+                    promptTemplate.include_examples
+                      ? `已启用，将使用 ${examples.filter((example) => example.enabled !== false).length} 条典型说法`
+                      : '已关闭，样例数据仍会保留，可随时重新开启'
+                  "
+                />
+              </article>
+            </div>
+
+            <aside class="prompt-composition-card">
+              <span class="section-kicker">系统自动拼装</span>
+              <h3>最终 Prompt 还包含</h3>
+              <p>
+                下列内容来自其他配置页面或运行时，提示词管理只负责全局指令。
+              </p>
+              <ul>
+                <li
+                  v-for="item in promptComposition"
+                  :key="item.label"
+                  :class="{ 'is-disabled': !item.enabled }"
+                >
+                  <span class="composition-check">{{ item.enabled ? "✓" : "—" }}</span>
+                  <div>
+                    <strong>{{ item.label }}</strong>
+                    <small>{{ item.detail }}</small>
+                  </div>
+                </li>
+              </ul>
+              <div class="composition-note">
+                <strong>不会进入 Prompt</strong>
+                <p>枚举型 Slot 的完整匹配词典由程序使用，只把已提取结果提供给模型辅助判断。</p>
+              </div>
+            </aside>
+          </div>
+
+          <article class="prompt-preview-workbench">
+            <div class="preview-workbench-copy">
+              <span class="prompt-step">04</span>
+              <div>
+                <h3>用一句真实表达检查最终 Prompt</h3>
+                <p>
+                  预览使用已保存的配置草稿，不调用模型，也不会影响当前线上版本。
+                </p>
+              </div>
+            </div>
+            <div class="preview-workbench-action">
+              <el-input
+                v-model="previewText"
+                aria-label="Prompt 预览输入"
+                placeholder="例如：膝盖有点疼，今天还能练腿吗？"
+                @keyup.enter="showPreview"
+              />
+              <el-button
+                type="primary"
+                @click="showPreview"
+                :disabled="busy || dirty || !previewText.trim()"
+              >
+                生成最终 Prompt
+              </el-button>
+            </div>
+            <p v-if="dirty" class="preview-disabled-tip">
+              请先保存到配置草稿，再生成与运行时一致的预览。
+            </p>
+          </article>
         </template>
       </section>
       <section v-else-if="section === 'releases'" class="config-editor">
-        <p>
-          Active Release：{{
-            activeId ? `#${activeId}` : "尚未发布"
-          }}。回退需从历史创建 Draft 后重新发布。
-        </p>
-        <div class="toolbar">
-          <el-select
-            v-model="selectedModel"
-            aria-label="发布模型版本"
-            placeholder="选择启用的 Model Config"
-            class="model-select"
-            ><el-option
-              v-for="model in models.filter((m) => m.enabled)"
-              :key="model.id"
-              :label="`${model.name} / ${model.version} (#${model.id})`"
-              :value="model.id" /></el-select
-          ><el-button
-            type="primary"
-            @click="preparePublish"
-            :disabled="busy || dirty || !draft.draft_json || !selectedModel"
-            >查看发布摘要</el-button
-          >
+        <div class="config-page-intro">
+          <div>
+            <span class="section-kicker">配置上线与版本恢复</span>
+            <h2>发布经过校验的业务配置</h2>
+            <p>
+              配置草稿只有发布后才会影响正式意图识别。模型选择由模型管理独立控制，不参与业务配置发布。
+            </p>
+          </div>
+          <el-button @click="reload" :disabled="busy">重新载入</el-button>
         </div>
-        <el-table :data="releases" row-key="id"
-          ><el-table-column label="Release" width="140"
-            ><template #default="{ row }"
-              >#{{ row.id }}
-              <el-tag v-if="row.id === activeId" type="success"
-                >Active</el-tag
-              ></template
-            ></el-table-column
-          ><el-table-column
-            prop="created_at"
-            label="创建时间 (UTC)"
-          /><el-table-column prop="note" label="发布说明" /><el-table-column
-            prop="default_model_config_id"
-            label="Model ID"
-            width="100"
-          /><el-table-column label="操作" width="270"
-            ><template #default="{ row }"
-              ><el-button @click="showRelease(row)" :disabled="busy"
-                >详情</el-button
-              ><el-button @click="restore(row)" :disabled="busy"
-                >从此版本创建 Draft</el-button
-              ></template
-            ></el-table-column
-          ></el-table
-        >
-        <div class="toolbar">
+
+        <div class="release-status-grid">
+          <article class="release-status-card">
+            <span>当前线上配置</span>
+            <strong>{{ activeRelease?.version ?? "尚未发布" }}</strong>
+            <small v-if="activeRelease">
+              {{ formatLocalTime(activeRelease.created_at) }} · {{ activeRelease.note }}
+            </small>
+            <small v-else>正式识别暂时没有可用的业务配置。</small>
+          </article>
+          <article class="release-status-card">
+            <span>配置草稿</span>
+            <strong>{{ dirty ? "有未保存修改" : "已保存" }}</strong>
+            <small>
+              {{ dirty ? "请先保存，避免发布遗漏修改。" : "当前页面内容已写入配置草稿。" }}
+            </small>
+          </article>
+          <article class="release-status-card">
+            <span>配置校验</span>
+            <strong>{{ validationPassed ? "校验通过" : "等待校验" }}</strong>
+            <small>
+              {{ validationPassed ? "可以查看变更并发布。" : "发布前需要检查结构和引用关系。" }}
+            </small>
+          </article>
+        </div>
+
+        <div class="release-flow">
+          <div class="release-flow-step" :class="{ done: !dirty }">
+            <span>1</span>
+            <div><strong>保存草稿</strong><small>汇总所有配置页面的修改</small></div>
+          </div>
+          <div class="release-flow-step" :class="{ done: validationPassed }">
+            <span>2</span>
+            <div><strong>校验配置</strong><small>检查名称、结构和引用是否合法</small></div>
+          </div>
+          <div class="release-flow-step">
+            <span>3</span>
+            <div><strong>确认并发布</strong><small>查看修改摘要后切换线上版本</small></div>
+          </div>
+        </div>
+
+        <div class="release-actions">
+          <el-button type="primary" @click="save" :disabled="busy || !dirty">
+            保存到配置草稿
+          </el-button>
+          <el-button @click="validate" :disabled="busy || dirty || !draft.draft_json">
+            校验配置
+          </el-button>
+          <el-button
+            type="success"
+            @click="preparePublish"
+            :disabled="busy || dirty || !validationPassed || !draft.draft_json"
+          >
+            查看变更并发布
+          </el-button>
+          <small v-if="dirty">发布不可用：存在未保存修改。</small>
+          <small v-else-if="!validationPassed">发布不可用：请先完成配置校验。</small>
+        </div>
+
+        <div class="release-history-heading">
+          <div>
+            <h3>配置版本</h3>
+            <p>历史版本不可修改；恢复后会生成草稿，需要重新校验和发布。</p>
+          </div>
+        </div>
+        <el-table :data="releases" row-key="id" class="release-history-table">
+          <el-table-column label="配置版本" min-width="180">
+            <template #default="{ row }">
+              <div class="release-version-cell">
+                <strong>{{ row.version }}</strong>
+                <el-tag v-if="row.id === activeId" type="success">当前生效</el-tag>
+                <el-tag v-else type="info">历史版本</el-tag>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="发布时间" min-width="170">
+            <template #default="{ row }">{{ formatLocalTime(row.created_at) }}</template>
+          </el-table-column>
+          <el-table-column prop="note" label="发布说明" min-width="240" />
+          <el-table-column label="操作" width="250" align="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="showRelease(row)" :disabled="busy">
+                查看配置
+              </el-button>
+              <el-button link @click="restore(row)" :disabled="busy || dirty">
+                基于此版本恢复
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="release-pagination">
           <el-button
             @click="pageHistory(-20)"
             :disabled="busy || releaseOffset === 0"
@@ -1803,6 +2453,69 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
         </div>
       </section>
     </div>
+    <el-dialog
+      v-model="exampleDialogVisible"
+      :title="editingExampleIndex === null ? '新增典型说法' : '编辑典型说法'"
+      width="620px"
+      :close-on-click-modal="false"
+    >
+      <div class="dialog-form">
+        <label>
+          <span>用户说法</span>
+          <el-input
+            v-model="exampleForm.text"
+            aria-label="典型用户说法"
+            type="textarea"
+            :rows="3"
+            placeholder="例如：我今天想练胸"
+          />
+        </label>
+        <div class="dialog-form-grid">
+          <label>
+            <span>期望 Route</span>
+            <el-select
+              v-model="exampleForm.route"
+              aria-label="典型说法期望 Route"
+              @change="changeExampleRoute"
+            >
+              <el-option
+                v-for="route in routes"
+                :key="route.name"
+                :label="`${route.zh}（${route.name}）`"
+                :value="route.name"
+              />
+            </el-select>
+          </label>
+          <label>
+            <span>期望 Intent（可选）</span>
+            <el-select
+              v-model="exampleForm.intent"
+              aria-label="典型说法期望 Intent"
+              clearable
+              placeholder="不选择时仅辅助 Route 判断"
+            >
+              <el-option
+                v-for="intent in exampleIntentOptions"
+                :key="intent.name"
+                :label="`${intent.zh}（${intent.name}）`"
+                :value="intent.name"
+              />
+            </el-select>
+          </label>
+        </div>
+        <div class="example-form-status">
+          <div>
+            <strong>启用这条说法</strong>
+            <small>停用后数据仍保留，但不会写入最终 Prompt。</small>
+          </div>
+          <el-switch v-model="exampleForm.enabled" />
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="exampleDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="applyExampleForm">应用修改</el-button>
+      </template>
+    </el-dialog>
     <el-dialog
       v-model="routeDialogVisible"
       :title="editingRouteName ? '编辑 Route' : '新增 Route'"
@@ -2083,56 +2796,74 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
     <el-dialog v-model="previewVisible" :title="previewTitle" width="760px">
       <pre class="prompt-view">{{ preview }}</pre>
     </el-dialog>
-    <el-dialog v-model="detailVisible" title="Release 详情" width="85%">
-      <pre class="json-view">{{ pretty(detail) }}</pre>
+    <el-dialog v-model="detailVisible" title="配置版本详情" width="680px">
+      <div v-if="detail" class="release-detail">
+        <div class="release-detail-heading">
+          <div>
+            <span>配置版本</span>
+            <strong>{{ detail.version }}</strong>
+          </div>
+          <el-tag :type="detail.id === activeId ? 'success' : 'info'">
+            {{ detail.id === activeId ? "当前生效" : "历史版本" }}
+          </el-tag>
+        </div>
+        <dl class="release-detail-meta">
+          <div>
+            <dt>发布时间</dt>
+            <dd>{{ formatLocalTime(detail.created_at) }}</dd>
+          </div>
+          <div>
+            <dt>发布说明</dt>
+            <dd>{{ detail.note }}</dd>
+          </div>
+        </dl>
+        <div class="release-detail-section">
+          <h4>包含的业务配置</h4>
+          <div class="release-detail-grid">
+            <article v-for="item in releaseDetailSections" :key="item.label">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+            </article>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="detailVisible = false">关闭</el-button>
+      </template>
     </el-dialog>
     <el-dialog
       v-model="confirmVisible"
-      title="确认发布新 Release"
-      width="85%"
+      title="确认发布业务配置"
+      width="680px"
       :close-on-click-modal="false"
     >
       <el-alert v-if="error" :title="error" type="error" :closable="false" />
-      <template v-if="summary"
-        ><p>
-          基于 Active #{{ summary.active_release_id ?? "无" }}；模型版本 #{{
-            summary.default_model_config_id
-          }}（{{ summary.model_changed ? "已更换" : "未更换" }}）
-        </p>
-        <p>
-          变更分区：{{
-            summary.changes.map((c) => c.section).join("、") ||
-            "无业务变更，仍将创建新 Release"
-          }}
-        </p>
-        <p class="hash">
-          Snapshot：{{ summary.config_snapshot_hash }}<br />Fingerprint：{{
-            summary.release_fingerprint
-          }}
-        </p>
-        <el-collapse
-          ><el-collapse-item
-            v-for="change in summary.changes"
-            :key="change.section"
-            :title="change.section"
-            ><div class="diff-grid">
-              <div>
-                <strong>发布前</strong>
-                <pre class="json-view">{{ pretty(change.before) }}</pre>
-              </div>
-              <div>
-                <strong>发布后</strong>
-                <pre class="json-view">{{ pretty(change.after) }}</pre>
-              </div>
-            </div></el-collapse-item
-          ></el-collapse
-        ><el-input
-          v-model="note"
-          aria-label="发布说明"
-          placeholder="填写本次发布说明（必填）"
-          maxlength="4000"
-          type="textarea"
-      /></template>
+      <template v-if="summary">
+        <div class="publish-confirm-copy">
+          <p>发布后，正式意图识别会立即使用这份业务配置；模型选择不会改变。</p>
+          <div class="publish-change-summary">
+            <strong>本次配置变更</strong>
+            <ul v-if="summary.changes.length">
+              <li v-for="change in summary.changes" :key="change.section">
+                {{ changeDescription(change) }}
+              </li>
+            </ul>
+            <p v-else>未检测到业务配置变化，仍会创建一个新的配置版本。</p>
+          </div>
+          <label class="publish-note-field">
+            <span>发布说明 <em>必填</em></span>
+            <el-input
+              v-model="note"
+              aria-label="发布说明"
+              placeholder="例如：调整训练计划意图说明，补充全局输出规则"
+              maxlength="4000"
+              show-word-limit
+              type="textarea"
+              :rows="4"
+            />
+          </label>
+        </div>
+      </template>
       <template #footer
         ><el-button @click="confirmVisible = false" :disabled="busy"
           >取消</el-button
@@ -2140,7 +2871,7 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
           type="primary"
           @click="publish"
           :disabled="busy || !note.trim()"
-          >确认发布并激活</el-button
+          >确认发布</el-button
         ></template
       >
     </el-dialog>
