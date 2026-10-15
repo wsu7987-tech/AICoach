@@ -351,6 +351,7 @@
       "zh": "动作",
       "description": "训练动作名称",
       "value_type": "string",
+      "enum_group": "exercise",
       "enabled": true
     },
     {
@@ -366,10 +367,12 @@
       "zh": "设备",
       "description": "设备名称或类型",
       "value_type": "string",
+      "enum_group": "device",
       "enabled": true
     }
   ],
   "enums": {
+    "exercise": [],
     "body_part": [
       {
         "canonical": "chest",
@@ -398,7 +401,8 @@
           "下肢"
         ]
       }
-    ]
+    ],
+    "device": []
   },
   "examples": [
     {
@@ -456,7 +460,7 @@
     "rules": [
       "route 必须是当前 Route 配置中存在且已启用的 key",
       "可输出多个 intents，但需按置信度排序",
-      "slot start/end 使用 UTF-16 code-unit offset，区间为 [start,end)",
+      "文本型 slot 只返回用户原话中明确出现的完整文本，枚举型 slot 由程序提取",
       "无法可靠分类时使用 unknown",
       "reason_summary 与 evidence 仅用于研发 Trace，不属于 Runtime Contract"
     ]

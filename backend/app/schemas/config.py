@@ -35,8 +35,10 @@ class DraftPreview(AdminInput):
 
 
 class PromptModulePreview(AdminInput):
-    module: Literal["routes", "intents", "intent"]
+    module: Literal["routes", "intents", "intent", "slots", "slot", "enum"]
     intent_name: str | None = Field(default=None, min_length=1)
+    slot_name: str | None = Field(default=None, min_length=1)
+    enum_group: str | None = Field(default=None, min_length=1)
 
 
 class PublishInput(AdminInput):
@@ -69,7 +71,7 @@ class DraftValidation(AdminOutput):
 
 
 class PromptModulePreviewResult(AdminOutput):
-    module: Literal["routes", "intents", "intent"]
+    module: Literal["routes", "intents", "intent", "slots", "slot", "enum"]
     content: str
 
 

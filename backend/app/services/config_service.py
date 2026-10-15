@@ -33,6 +33,7 @@ from app.schemas.intent import (
     RuntimeConfigSnapshot,
     sha256_canonical,
 )
+from app.services.slot_extractor import extract_enum_slots
 
 
 class ConfigError(Exception):
@@ -148,13 +149,22 @@ async def preview_prompt(
 ) -> PromptBuildResult:
     row = await require_draft(session)
     payload, _ = validate_business(row.draft_json)
-    return PromptBuilder().preview(payload, text, context)
+    snapshot = RuntimeConfigSnapshot.model_validate(payload)
+    program_enum_slots = extract_enum_slots(text, snapshot)
+    return PromptBuilder().preview(
+        snapshot,
+        text,
+        context,
+        pre_extracted_slots=program_enum_slots,
+    )
 
 
 async def preview_prompt_module(
     session: AsyncSession,
     module: str,
-    intent_name: str | None,
+    intent_name: str | None = None,
+    slot_name: str | None = None,
+    enum_group: str | None = None,
 ) -> dict[str, str]:
     row = await require_draft(session)
     payload, _ = validate_business(row.draft_json)
@@ -169,7 +179,21 @@ async def preview_prompt_module(
         except ValueError as error:
             raise ConfigError("CONFIG_INVALID", str(error), 422) from None
         return {"module": module, "content": content}
-    raise ConfigError("INVALID_INPUT", "单个 Intent 预览必须指定 intent_name", 422)
+    if module == "slots":
+        return {"module": module, "content": builder.preview_slots(payload)}
+    if module == "slot" and slot_name:
+        try:
+            content = builder.preview_slot(payload, slot_name)
+        except ValueError as error:
+            raise ConfigError("CONFIG_INVALID", str(error), 422) from None
+        return {"module": module, "content": content}
+    if module == "enum" and enum_group:
+        try:
+            content = builder.preview_enum_group(payload, enum_group)
+        except ValueError as error:
+            raise ConfigError("CONFIG_INVALID", str(error), 422) from None
+        return {"module": module, "content": content}
+    raise ConfigError("INVALID_INPUT", "模块预览缺少对应的目标名称", 422)
 
 
 def effective_model_snapshot(row: ModelConfig) -> ModelConfigSnapshot:

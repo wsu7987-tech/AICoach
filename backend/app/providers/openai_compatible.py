@@ -21,6 +21,8 @@ from app.providers.types import (
 )
 from app.schemas.managed_model import ManagedModelRuntimeSnapshot
 from app.schemas.intent import (
+    LLMRecognitionOutput,
+    LLMRecognitionOutputV2,
     LLMStructuredIntentOutput,
     LLMStructuredIntentOutputV2,
     ModelConfigSnapshot,
@@ -188,11 +190,13 @@ class OpenAICompatibleProvider:
         if self.model_config.structured_output_mode == "json_object":
             return {"type": "json_object"}
         schema_name = prompt.metadata.get("output_schema_name")
-        output_model = (
-            LLMStructuredIntentOutputV2
-            if schema_name == LLMStructuredIntentOutputV2.__name__
-            else LLMStructuredIntentOutput
-        )
+        output_models = {
+            LLMRecognitionOutput.__name__: LLMRecognitionOutput,
+            LLMRecognitionOutputV2.__name__: LLMRecognitionOutputV2,
+            LLMStructuredIntentOutput.__name__: LLMStructuredIntentOutput,
+            LLMStructuredIntentOutputV2.__name__: LLMStructuredIntentOutputV2,
+        }
+        output_model = output_models.get(schema_name, LLMRecognitionOutput)
         schema = output_model.model_json_schema()
         schema_name = output_model.__name__
         self._validate_json_schema(schema)

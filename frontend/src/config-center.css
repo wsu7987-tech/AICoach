@@ -48,6 +48,288 @@
 .route-table {
   width: 100%;
 }
+.config-page-intro {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 6px 2px 18px;
+  border-bottom: 1px solid #edf0f5;
+}
+.config-page-intro h2 {
+  margin: 4px 0 7px;
+  color: #202b3c;
+  font-size: 20px;
+  line-height: 1.35;
+}
+.config-page-intro p {
+  max-width: 760px;
+  margin: 0;
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.intro-actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+.intro-actions .el-button + .el-button {
+  margin-left: 0;
+}
+.section-kicker {
+  color: #2f6fdd;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.slot-type-guide {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 16px 0;
+}
+.slot-type-guide article {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 14px;
+  border: 1px solid #e4e9f1;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+.slot-type-guide strong {
+  color: #263247;
+  font-size: 13px;
+}
+.slot-type-guide p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 10px;
+  margin: 16px 0;
+}
+.metric-card {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 13px 15px;
+  border: 1px solid #e4e9f1;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.metric-card strong {
+  color: #244a86;
+  font-size: 22px;
+}
+.metric-card span {
+  color: #667085;
+  font-size: 12px;
+}
+.manager-toolbar {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) 180px auto;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0 12px;
+}
+.result-count {
+  color: #7b8494;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.entity-table {
+  width: 100%;
+}
+.entity-name {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.entity-name strong {
+  color: #263247;
+}
+.entity-name code,
+.entity-table code,
+.form-help code {
+  color: #315f9e;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+}
+.entity-table small {
+  display: block;
+  margin-top: 3px;
+}
+.muted-value {
+  color: #9aa3b2;
+  font-size: 12px;
+}
+.inline-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #2f6fdd;
+  font: 12px ui-monospace, SFMono-Regular, Consolas, monospace;
+  cursor: pointer;
+}
+.inline-link:hover {
+  text-decoration: underline;
+}
+.enum-manager {
+  display: grid;
+  grid-template-columns: minmax(250px, 29%) 1fr;
+  min-height: 540px;
+  margin-top: 16px;
+  border: 1px solid #e1e6ef;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.enum-group-sidebar {
+  padding: 14px;
+  border-right: 1px solid #e1e6ef;
+  background: #f8fafc;
+}
+.enum-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+.enum-group-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #263247;
+  text-align: left;
+  cursor: pointer;
+}
+.enum-group-item:hover {
+  border-color: #d7e3f5;
+  background: #f1f6fd;
+}
+.enum-group-item.active {
+  border-color: #b8cff2;
+  background: #e9f2ff;
+}
+.enum-group-item > span:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.enum-group-item strong,
+.enum-group-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.enum-detail {
+  min-width: 0;
+  padding: 20px;
+  overflow: auto;
+}
+.enum-detail-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 16px;
+}
+.enum-detail-heading h3 {
+  margin: 4px 0 8px;
+  color: #202b3c;
+  font-size: 20px;
+}
+.usage-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  color: #667085;
+  font-size: 12px;
+}
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+.detail-actions .el-button + .el-button {
+  margin-left: 0;
+}
+.enum-value-table {
+  margin-top: 14px;
+}
+.tag-list,
+.editable-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.editable-tag-list {
+  min-height: 32px;
+  padding: 9px;
+  border: 1px solid #e4e9f1;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+.form-help {
+  padding: 10px 12px;
+  border-left: 3px solid #75a3e5;
+  border-radius: 4px;
+  background: #f2f7ff;
+  color: #52637a;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.dialog-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.dialog-form-grid.single-column {
+  grid-template-columns: 1fr;
+}
+.dialog-form label > small {
+  margin-top: 0;
+  line-height: 1.5;
+}
+.switch-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px;
+  border: 1px solid #e4e9f1;
+  border-radius: 7px;
+  background: #fbfcfe;
+}
+.switch-field > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.alias-input-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
 .intent-manager {
   display: grid;
   grid-template-columns: minmax(360px, 36%) 1fr;
@@ -211,14 +493,41 @@
   font-family: ui-monospace, monospace;
 }
 .config-center label {
-  display: block;
   margin: 8px 0 5px;
+}
+.config-editor > label {
+  display: block;
 }
 @media (max-width: 900px) {
   .diff-grid,
   .intent-manager,
-  .intent-form-grid {
+  .intent-form-grid,
+  .enum-manager,
+  .dialog-form-grid {
     grid-template-columns: 1fr;
+  }
+  .metric-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .slot-type-guide {
+    grid-template-columns: 1fr;
+  }
+  .manager-toolbar {
+    grid-template-columns: 1fr;
+  }
+  .config-page-intro,
+  .enum-detail-heading {
+    flex-direction: column;
+  }
+  .intro-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .enum-group-sidebar {
+    max-height: 280px;
+    border-right: 0;
+    border-bottom: 1px solid #e1e6ef;
+    overflow: auto;
   }
   .intent-sidebar {
     max-height: 300px;

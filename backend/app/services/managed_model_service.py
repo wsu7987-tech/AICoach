@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ManagedModel, ProviderCredential, RuntimeModelState
-from app.schemas.intent import LLMStructuredIntentOutputV2
+from app.schemas.intent import LLMRecognitionOutputV2
 from app.schemas.managed_model import (
     ConnectionVerifyResult,
     ManagedModelCreate,
@@ -301,6 +301,7 @@ async def verify_connection(
             "actions": [
                 {
                     "action_id": "action_1",
+                    "source_text": "connection verification",
                     "route": "unknown",
                     "intent": None,
                     "slots": [],
@@ -336,7 +337,7 @@ async def verify_connection(
         )
         content = completion.choices[0].message.content or ""
         try:
-            LLMStructuredIntentOutputV2.model_validate(json.loads(content))
+            LLMRecognitionOutputV2.model_validate(json.loads(content))
         except (json.JSONDecodeError, ValidationError, TypeError):
             raise ConfigError(
                 "MODEL_OUTPUT_FORMAT_UNSUPPORTED",

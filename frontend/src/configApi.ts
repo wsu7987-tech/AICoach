@@ -32,12 +32,26 @@ export interface Example {
   intent?: string | null;
   enabled?: boolean;
 }
+export interface SlotDefinition {
+  name: string;
+  zh: string;
+  description: string;
+  value_type: "string" | "enum";
+  enabled: boolean;
+  enum_group?: string | null;
+}
+export interface EnumValueDefinition {
+  canonical: string;
+  display: string;
+  aliases: string[];
+  enabled?: boolean;
+}
 export interface DraftJson {
   schema_version: number;
   routes: Route[];
   intents: Intent[];
-  slots: unknown[];
-  enums: Record<string, unknown>;
+  slots: SlotDefinition[];
+  enums: Record<string, EnumValueDefinition[]>;
   examples: Example[];
   prompt_template: Record<string, unknown>;
 }
@@ -85,6 +99,13 @@ export interface PublishSummary {
   model_changed: boolean;
   changes: { section: string; before: unknown; after: unknown }[];
 }
+export type PromptModule =
+  | "routes"
+  | "intents"
+  | "intent"
+  | "slots"
+  | "slot"
+  | "enum";
 export async function request<T>(
   path: string,
   method = "GET",
@@ -122,13 +143,18 @@ export const configApi = {
       { text },
     ),
   previewModule: (
-    module: "routes" | "intents" | "intent",
-    intent_name?: string,
+    module: PromptModule,
+    targetName?: string,
   ) =>
-    request<{ module: "routes" | "intents" | "intent"; content: string }>(
+    request<{ module: PromptModule; content: string }>(
       "/config/prompt-preview/module",
       "POST",
-      { module, intent_name },
+      {
+        module,
+        ...(module === "intent" ? { intent_name: targetName } : {}),
+        ...(module === "slot" ? { slot_name: targetName } : {}),
+        ...(module === "enum" ? { enum_group: targetName } : {}),
+      },
     ),
   models: (offset = 0) =>
     request<ModelConfig[]>(`/model-configs?limit=200&offset=${offset}`),

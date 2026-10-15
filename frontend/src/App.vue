@@ -181,6 +181,7 @@ onBeforeUnmount(() => window.removeEventListener("popstate", syncRoute));
         <ConfigCenter
           v-else-if="route.startsWith('/config/')"
           :section="configSection"
+          @navigate="navigate"
         />
         <DebugConsole
           v-else

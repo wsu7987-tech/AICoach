@@ -149,6 +149,38 @@ class LLMStructuredIntentOutput(ContractModel):
         return self
 
 
+class LLMExtractedTextSlot(ContractModel):
+    """Minimal text Slot emitted by the model; metadata and spans are server-owned."""
+
+    name: str = Field(min_length=1)
+    value: str = Field(min_length=1)
+    confidence: float = Field(ge=0, le=1)
+
+
+class LLMRecognitionOutput(ContractModel):
+    """Runtime V1 model output after enum extraction moved into the program."""
+
+    route: RouteKey
+    intents: list[IntentCandidate]
+    slots: list[LLMExtractedTextSlot] = Field(default_factory=list)
+    risk: RiskInfo | None
+    need_clarification: bool
+    clarification: str | None = None
+    reason_summary: str | None = None
+    evidence: list[EvidenceItem] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def valid_llm_invariants(self) -> LLMRecognitionOutput:
+        _validate_intent_order(self.intents)
+        _validate_clarification(
+            self.route,
+            self.need_clarification,
+            self.clarification,
+            allow_training_normalization=True,
+        )
+        return self
+
+
 type IntentComposition = Literal["single", "parallel", "sequential", "alternative"]
 
 
@@ -228,8 +260,47 @@ class LLMStructuredIntentOutputV2(ContractModel):
         return self
 
 
+class LLMRecognitionAction(ContractModel):
+    """One model-classified action with the exact source fragment it covers."""
+
+    action_id: str = Field(pattern=r"^action_[1-9][0-9]*$")
+    source_text: str = Field(min_length=1)
+    route: RouteKey
+    intent: IntentCandidate | None
+    slots: list[LLMExtractedTextSlot] = Field(default_factory=list)
+    order: int = Field(ge=1)
+    depends_on: list[str] = Field(default_factory=list)
+
+
+class LLMRecognitionOutputV2(ContractModel):
+    """Runtime V2 model output with lightweight text Slots only."""
+
+    schema_version: Literal[2] = 2
+    is_compound: bool
+    composition: IntentComposition
+    actions: list[LLMRecognitionAction]
+    risk: RiskInfo | None
+    need_clarification: bool
+    clarification: str | None = None
+    reason_summary: str | None = None
+    evidence: list[EvidenceItem] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def valid_compound_llm_invariants(self) -> LLMRecognitionOutputV2:
+        _validate_action_plan(
+            self.actions,
+            is_compound=self.is_compound,
+            composition=self.composition,
+            need_clarification=self.need_clarification,
+        )
+        _validate_clarification(
+            "compound", self.need_clarification, self.clarification
+        )
+        return self
+
+
 def _validate_action_plan(
-    actions: list[IntentAction] | list[LLMIntentAction],
+    actions: list[IntentAction] | list[LLMIntentAction] | list[LLMRecognitionAction],
     *,
     is_compound: bool,
     composition: IntentComposition,
@@ -311,8 +382,6 @@ class SlotDefinition(ContractModel):
     def enum_group_matches_value_type(self) -> SlotDefinition:
         if self.value_type == "enum" and not self.enum_group:
             raise ValueError("enum slot requires enum_group")
-        if self.value_type == "string" and self.enum_group is not None:
-            raise ValueError("string slot cannot declare enum_group")
         return self
 
 
@@ -376,14 +445,33 @@ class RuntimeConfigSnapshot(ContractModel):
                 if owner != intent.name:
                     raise ValueError(f"intent name/zh/alias conflict: {label}")
         _ensure_unique([item.name for item in self.slots], "slot names")
+        program_enum_groups = {
+            slot.enum_group
+            for slot in self.slots
+            if slot.value_type == "enum" and slot.enum_group is not None
+        }
         for group_name, values in self.enums.items():
             if not group_name.strip():
                 raise ValueError("enum group names must not be blank")
             _ensure_unique(
                 [item.canonical for item in values], f"enum {group_name} canonical values"
             )
+            if group_name in program_enum_groups:
+                expression_owner: dict[str, str] = {}
+                for item in values:
+                    for expression in _enum_forms(item):
+                        expression = expression.strip()
+                        if not expression:
+                            raise ValueError(
+                                f"enum {group_name} canonical/display/alias must not be blank"
+                            )
+                        owner = expression_owner.setdefault(expression, item.canonical)
+                        if owner != item.canonical:
+                            raise ValueError(
+                                f"enum {group_name} expression conflict: {expression}"
+                            )
         for slot in self.slots:
-            if slot.value_type == "enum" and slot.enum_group not in self.enums:
+            if slot.enum_group is not None and slot.enum_group not in self.enums:
                 raise ValueError(f"slot {slot.name} references an unknown enum_group")
 
         intents_by_name = {item.name: item for item in self.intents}
@@ -639,6 +727,160 @@ def validate_llm_output_v2(
         ),
         validation_issues=issues,
     )
+
+
+def validate_recognition_output(
+    output: LLMRecognitionOutput,
+    snapshot: RuntimeConfigSnapshot,
+    *,
+    request_id: str,
+    text: str,
+    program_slots: list[SlotValue] | None = None,
+    slot_search_range: tuple[int, int] | None = None,
+) -> ValidatedIntentOutput:
+    """Validate lightweight model Slots and merge deterministic enum matches."""
+
+    config = validate_runtime_config_snapshot(snapshot)
+    slots_by_name = {item.name: item for item in config.active_slots}
+    text_slots: list[SlotValue] = []
+    for slot in output.slots:
+        configured = slots_by_name.get(slot.name)
+        if configured is None:
+            raise BusinessOutputValidationError(f"slot {slot.name} is not enabled")
+        if configured.value_type == "enum":
+            # Enum Slots are server-owned. Ignore a redundant model emission so
+            # an otherwise usable recognition result does not fail closed.
+            continue
+        span = _find_unique_value_span_in_range(
+            text, slot.value, slot_search_range
+        )
+        text_slots.append(
+            SlotValue(
+                name=configured.name,
+                zh=configured.zh,
+                value=slot.value,
+                start=span[0] if span is not None else 0,
+                end=span[1] if span is not None else 0,
+                confidence=slot.confidence,
+            )
+        )
+
+    validated = validate_llm_output(
+        LLMStructuredIntentOutput(
+            route=output.route,
+            intents=output.intents,
+            slots=text_slots,
+            risk=output.risk,
+            need_clarification=output.need_clarification,
+            clarification=output.clarification,
+            reason_summary=output.reason_summary,
+            evidence=output.evidence,
+        ),
+        config,
+        request_id=request_id,
+        text=text,
+    )
+    merged = _merge_slots(validated.result.slots, program_slots or [])
+    return ValidatedIntentOutput(
+        result=validated.result.model_copy(update={"slots": merged}),
+        validation_issues=validated.validation_issues,
+    )
+
+
+def validate_recognition_output_v2(
+    output: LLMRecognitionOutputV2,
+    snapshot: RuntimeConfigSnapshot,
+    *,
+    request_id: str,
+    text: str,
+    program_slots_by_action: dict[str, list[SlotValue]] | None = None,
+    action_ranges: dict[str, tuple[int, int]] | None = None,
+) -> ValidatedIntentOutputV2:
+    """Validate lightweight action outputs and merge action-scoped enum matches."""
+
+    actions: list[IntentAction] = []
+    issues: list[OutputValidationIssue] = []
+    scoped_program_slots = program_slots_by_action or {}
+    scoped_action_ranges = action_ranges or {}
+    for action in sorted(output.actions, key=lambda item: item.order):
+        candidate_intents = [action.intent] if action.intent is not None else []
+        validated = validate_recognition_output(
+            LLMRecognitionOutput(
+                route=action.route,
+                intents=candidate_intents,
+                slots=action.slots,
+                risk=None,
+                need_clarification=False,
+                clarification=None,
+                reason_summary=None,
+                evidence=[],
+            ),
+            snapshot,
+            request_id=request_id,
+            text=text,
+            program_slots=scoped_program_slots.get(action.action_id, []),
+            slot_search_range=scoped_action_ranges.get(action.action_id),
+        )
+        normalized_intent = (
+            validated.result.intents[0] if validated.result.intents else None
+        )
+        actions.append(
+            IntentAction(
+                action_id=action.action_id,
+                route=validated.result.route,
+                intent=normalized_intent,
+                slots=validated.result.slots,
+                order=action.order,
+                depends_on=action.depends_on,
+            )
+        )
+        issues.extend(validated.validation_issues)
+
+    return ValidatedIntentOutputV2(
+        result=IntentResultV2(
+            request_id=request_id,
+            text=text,
+            is_compound=output.is_compound,
+            composition=output.composition,
+            actions=actions,
+            risk=output.risk,
+            need_clarification=output.need_clarification,
+            clarification=output.clarification,
+        ),
+        validation_issues=issues,
+    )
+
+
+def _merge_slots(model_slots: list[SlotValue], program_slots: list[SlotValue]) -> list[SlotValue]:
+    merged: dict[tuple[str, str, int, int], SlotValue] = {}
+    for slot in [*model_slots, *program_slots]:
+        merged[(slot.name, slot.value, slot.start, slot.end)] = slot
+    return sorted(
+        merged.values(),
+        key=lambda slot: (slot.start, slot.end, slot.name, slot.value),
+    )
+
+
+def _find_unique_value_span_in_range(
+    text: str,
+    value: str,
+    search_range: tuple[int, int] | None,
+) -> tuple[int, int] | None:
+    if search_range is None:
+        return None
+    offsets = _utf16_offsets(text)
+    try:
+        char_start = offsets.index(search_range[0])
+        char_end = offsets.index(search_range[1])
+    except ValueError:
+        return None
+    scoped_text = text[char_start:char_end]
+    first = scoped_text.find(value)
+    if first < 0 or scoped_text.find(value, first + 1) >= 0:
+        return None
+    absolute_start = char_start + first
+    absolute_end = absolute_start + len(value)
+    return offsets[absolute_start], offsets[absolute_end]
 
 
 def _find_enum_value(values: list[EnumValueDefinition], value: str) -> EnumValueDefinition | None:

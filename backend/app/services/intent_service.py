@@ -27,15 +27,20 @@ from app.schemas.intent import (
     IntentAnalyzeRequest,
     IntentResult,
     IntentResultV2,
-    LLMStructuredIntentOutput,
-    LLMStructuredIntentOutputV2,
+    LLMRecognitionOutput,
+    LLMRecognitionOutputV2,
     ModelConfigSnapshot,
     OutputValidationIssue,
     RuntimeConfigSnapshot,
-    validate_llm_output,
-    validate_llm_output_v2,
+    validate_recognition_output,
+    validate_recognition_output_v2,
 )
 from app.services.runtime_model import ResolvedManagedModel
+from app.services.slot_extractor import (
+    extract_enum_slots,
+    locate_action_ranges,
+    scope_enum_slots_to_actions,
+)
 
 logger = logging.getLogger(__name__)
 CANCEL_TRACE_TIMEOUT_SECONDS = 0.1
@@ -295,30 +300,52 @@ class IntentService:
                     else self._provider
                 )
                 verify_provider(provider, config.model_config_snapshot)
+            program_enum_slots = extract_enum_slots(request.text, config.snapshot)
             prompt = self._prompt_builder.build(
                 config.snapshot,
                 request.text,
                 request.context,
                 output_version=output_version,
+                pre_extracted_slots=program_enum_slots,
             )
             trace.prompt = prompt.model_dump(mode="json")
             response = await provider.invoke(prompt)
             trace.attempts = response.attempts
             if output_version == 2:
                 output = self._parse_output_v2(response.content, response.attempts)
-                validated = validate_llm_output_v2(
+                action_ranges = locate_action_ranges(
+                    request.text,
+                    [
+                        (action.action_id, action.source_text)
+                        for action in sorted(
+                            output.actions, key=lambda item: item.order
+                        )
+                    ],
+                )
+                if len(output.actions) == 1:
+                    program_slots_by_action = {
+                        output.actions[0].action_id: program_enum_slots
+                    }
+                else:
+                    program_slots_by_action = scope_enum_slots_to_actions(
+                        program_enum_slots, action_ranges
+                    )
+                validated = validate_recognition_output_v2(
                     output,
                     config.snapshot,
                     request_id=effective_request_id,
                     text=request.text,
+                    program_slots_by_action=program_slots_by_action,
+                    action_ranges=action_ranges,
                 )
             else:
                 output = self._parse_output(response.content, response.attempts)
-                validated = validate_llm_output(
+                validated = validate_recognition_output(
                     output,
                     config.snapshot,
                     request_id=effective_request_id,
                     text=request.text,
+                    program_slots=program_enum_slots,
                 )
             trace.validation_issues = validated.validation_issues
             trace.final_result = validated.result.model_dump(mode="json")
@@ -374,7 +401,7 @@ class IntentService:
             raise error from None
 
     @staticmethod
-    def _parse_output(content: str, attempts: list[LLMAttempt]) -> LLMStructuredIntentOutput:
+    def _parse_output(content: str, attempts: list[LLMAttempt]) -> LLMRecognitionOutput:
         try:
             payload = json.loads(content)
         except json.JSONDecodeError:
@@ -390,7 +417,7 @@ class IntentService:
                 attempts=attempts,
             )
         try:
-            return LLMStructuredIntentOutput.model_validate(payload)
+            return LLMRecognitionOutput.model_validate(payload)
         except ValidationError as exc:
             raise IntentServiceError(
                 ErrorCode.MODEL_OUTPUT_SCHEMA_ERROR,
@@ -401,7 +428,7 @@ class IntentService:
     @staticmethod
     def _parse_output_v2(
         content: str, attempts: list[LLMAttempt]
-    ) -> LLMStructuredIntentOutputV2:
+    ) -> LLMRecognitionOutputV2:
         try:
             payload = json.loads(content)
         except json.JSONDecodeError:
@@ -417,7 +444,7 @@ class IntentService:
                 attempts=attempts,
             )
         try:
-            return LLMStructuredIntentOutputV2.model_validate(payload)
+            return LLMRecognitionOutputV2.model_validate(payload)
         except ValidationError as exc:
             raise IntentServiceError(
                 ErrorCode.MODEL_OUTPUT_SCHEMA_ERROR,

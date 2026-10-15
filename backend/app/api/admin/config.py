@@ -85,6 +85,8 @@ async def preview_prompt_module(body: PromptModulePreview, session: Session):
         session,
         module=body.module,
         intent_name=body.intent_name,
+        slot_name=body.slot_name,
+        enum_group=body.enum_group,
     )
 
 
