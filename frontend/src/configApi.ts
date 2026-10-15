@@ -25,6 +25,11 @@ export interface Intent {
   enabled: boolean;
   aliases: string[];
   mapping_note?: string | null;
+  required_slots?: IntentRequiredSlot[];
+}
+export interface IntentRequiredSlot {
+  slot_name: string;
+  default_value: string | null;
 }
 export interface Example {
   text: string;

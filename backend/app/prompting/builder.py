@@ -240,6 +240,20 @@ def _render_intents(
         lines.extend(["", f"### Route: {route.name}", ""])
         for intent in route_intents:
             lines.append(f"- {intent.name}：{intent.description}")
+            if intent.required_slots:
+                slot_by_name = {slot.name: slot for slot in snapshot.active_slots}
+                requirements = []
+                for requirement in intent.required_slots:
+                    slot = slot_by_name[requirement.slot_name]
+                    default_label = (
+                        f"，缺失时使用默认值 {requirement.default_value}"
+                        if requirement.default_value is not None
+                        else "，缺失时必须追问"
+                    )
+                    requirements.append(
+                        f"{slot.name}（{slot.zh}{default_label}）"
+                    )
+                lines.append(f"  必填参数：{'、'.join(requirements)}")
             intent_examples = [item.text for item in examples if item.intent == intent.name]
             if intent_examples:
                 lines.append("  典型说法：")

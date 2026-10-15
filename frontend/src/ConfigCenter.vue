@@ -17,6 +17,7 @@ import {
   type DraftJson,
   type Example,
   type Intent,
+  type IntentRequiredSlot,
   type PublishSummary,
   type Release,
   type Route,
@@ -313,7 +314,10 @@ const selectedGroupIsText = computed(
     selectedEnumUsage.value.every((slot) => slot.value_type === "string"),
 );
 
-type IntentEditor = Intent & { utterances: string[] };
+type IntentEditor = Omit<Intent, "required_slots"> & {
+  required_slots: IntentRequiredSlot[];
+  utterances: string[];
+};
 type IntentTreeNode = {
   key: string;
   kind: "route" | "intent";
@@ -326,7 +330,9 @@ type IntentTreeNode = {
 };
 
 const intentSearch = ref("");
+const intentSidebarRef = ref<HTMLElement>();
 const intentTreeRef = ref<TreeInstance>();
+const selectedRouteName = ref<string | null>(null);
 const selectedIntentName = ref<string | null>(null);
 const isNewIntent = ref(false);
 const utteranceInput = ref("");
@@ -338,11 +344,27 @@ const intentForm = reactive<IntentEditor>({
   enabled: true,
   aliases: [],
   mapping_note: null,
+  required_slots: [],
   utterances: [],
 });
 
 const routeNodeKey = (name: string) => `route:${name}`;
 const intentNodeKey = (name: string) => `intent:${name}`;
+
+const selectedRoute = computed(
+  () =>
+    routes.value.find((route) => route.name === selectedRouteName.value) ?? null,
+);
+const selectedRouteIntents = computed(() =>
+  selectedRouteName.value
+    ? intents.value.filter((intent) => intent.route === selectedRouteName.value)
+    : [],
+);
+const currentIntentTreeKey = computed(() => {
+  if (selectedIntentName.value) return intentNodeKey(selectedIntentName.value);
+  if (selectedRouteName.value) return routeNodeKey(selectedRouteName.value);
+  return undefined;
+});
 
 const intentTree = computed<IntentTreeNode[]>(() => {
   return routes.value.map((route) => {
@@ -377,9 +399,9 @@ function filterIntentTreeNode(value: string, data: IntentTreeNode) {
 
 watch(intentSearch, (value) => intentTreeRef.value?.filter(value));
 
-watch(selectedIntentName, (name) => {
+watch(currentIntentTreeKey, (key) => {
   void nextTick(() => {
-    intentTreeRef.value?.setCurrentKey(name ? intentNodeKey(name) : undefined);
+    intentTreeRef.value?.setCurrentKey(key);
   });
 });
 
@@ -458,11 +480,20 @@ function acceptDraft(value: Draft) {
     ) {
       selectedEnumGroup.value = Object.keys(enumGroups.value)[0] ?? null;
     }
-    const selected =
-      intents.value.find(
-        (intent) => intent.name === selectedIntentName.value,
-      ) ?? intents.value[0];
-    if (selected) selectIntent(selected);
+    const routeSelectionIsValid = routes.value.some(
+      (route) => route.name === selectedRouteName.value,
+    );
+    if (routeSelectionIsValid) {
+      selectedIntentName.value = null;
+      isNewIntent.value = false;
+    } else {
+      selectedRouteName.value = null;
+      const selected =
+        intents.value.find(
+          (intent) => intent.name === selectedIntentName.value,
+        ) ?? intents.value[0];
+      if (selected) selectIntent(selected);
+    }
   }
   dirty.value = false;
   validationPassed.value = false;
@@ -578,6 +609,17 @@ function applySlotForm() {
       )
     )
       throw new Error(`Slot 标识 ${name} 已存在`);
+    const requiredBy = intents.value.filter((intent) =>
+      (intent.required_slots ?? []).some(
+        (requirement) => requirement.slot_name === editingSlotName.value,
+      ),
+    );
+    if (!slotForm.enabled && requiredBy.length)
+      throw new Error(
+        `Slot ${editingSlotName.value} 是 ${requiredBy
+          .map((intent) => intent.zh)
+          .join("、")} 的必填参数，不能停用`,
+      );
     if (
       current &&
       current.name !== name &&
@@ -611,6 +653,18 @@ function applySlotForm() {
         (slot) => slot.name === editingSlotName.value,
       );
       if (index >= 0) slots.value[index] = next;
+      if (editingSlotName.value !== name) {
+        intents.value.forEach((intent) => {
+          (intent.required_slots ?? []).forEach((requirement) => {
+            if (requirement.slot_name === editingSlotName.value)
+              requirement.slot_name = name;
+          });
+        });
+        intentForm.required_slots.forEach((requirement) => {
+          if (requirement.slot_name === editingSlotName.value)
+            requirement.slot_name = name;
+        });
+      }
     }
     editingSlotName.value = name;
     slotDialogVisible.value = false;
@@ -619,6 +673,17 @@ function applySlotForm() {
 }
 
 async function deleteSlot(slot: SlotDefinition) {
+  const requiredBy = intents.value.filter((intent) =>
+    (intent.required_slots ?? []).some(
+      (requirement) => requirement.slot_name === slot.name,
+    ),
+  );
+  if (requiredBy.length) {
+    error.value = `Slot ${slot.name} 是 ${requiredBy
+      .map((intent) => intent.zh)
+      .join("、")} 的必填参数，请先解除引用`;
+    return;
+  }
   try {
     await ElMessageBox.confirm(
       `确定删除 Slot ${slot.zh}（${slot.name}）？发布后模型将不再提取这个参数。`,
@@ -1073,10 +1138,14 @@ async function deleteRoute(route: Route) {
 
 function selectIntent(intent: Intent) {
   const currentExamples = examples.value;
+  selectedRouteName.value = null;
   selectedIntentName.value = intent.name;
   isNewIntent.value = false;
   Object.assign(intentForm, intent, {
     aliases: [...(intent.aliases ?? [])],
+    required_slots: (intent.required_slots ?? []).map((requirement) => ({
+      ...requirement,
+    })),
     utterances: currentExamples
       .filter((example) => example.intent === intent.name)
       .map((example) => example.text),
@@ -1085,6 +1154,7 @@ function selectIntent(intent: Intent) {
 }
 
 function newIntent(routeName?: string) {
+  selectedRouteName.value = null;
   selectedIntentName.value = null;
   isNewIntent.value = true;
   const selectedRoute = routes.value.some((route) => route.name === routeName)
@@ -1100,12 +1170,14 @@ function newIntent(routeName?: string) {
     enabled: true,
     aliases: [],
     mapping_note: null,
+    required_slots: [],
     utterances: [],
   });
   utteranceInput.value = "";
 }
 
 function resetIntentEditor() {
+  selectedRouteName.value = null;
   selectedIntentName.value = null;
   isNewIntent.value = false;
   Object.assign(intentForm, {
@@ -1116,24 +1188,77 @@ function resetIntentEditor() {
     enabled: true,
     aliases: [],
     mapping_note: null,
+    required_slots: [],
     utterances: [],
   });
   utteranceInput.value = "";
 }
 
 function handleIntentTreeNodeClick(data: IntentTreeNode) {
-  if (data.kind !== "intent" || !data.intentName) {
-    void nextTick(() => {
-      intentTreeRef.value?.setCurrentKey(
-        selectedIntentName.value
-          ? intentNodeKey(selectedIntentName.value)
-          : data.key,
-      );
-    });
+  if (data.kind === "route") {
+    selectedRouteName.value = data.routeName;
+    selectedIntentName.value = null;
+    isNewIntent.value = false;
     return;
   }
+  if (!data.intentName) return;
   const intent = intents.value.find((item) => item.name === data.intentName);
   if (intent) applyLocal(() => selectIntent(intent));
+}
+
+function setAllIntentRoutesExpanded(expanded: boolean) {
+  for (const route of routes.value) {
+    const node = intentTreeRef.value?.getNode(routeNodeKey(route.name));
+    if (expanded) node?.expand();
+    else node?.collapse();
+  }
+}
+
+function locateIntent(intent: Intent) {
+  intentTreeRef.value?.getNode(routeNodeKey(intent.route))?.expand();
+  applyLocal(() => selectIntent(intent));
+  void nextTick(async () => {
+    intentTreeRef.value?.setCurrentKey(intentNodeKey(intent.name));
+    await nextTick();
+    const currentNode = intentSidebarRef.value?.querySelector<HTMLElement>(
+      ".el-tree-node.is-current",
+    );
+    currentNode?.scrollIntoView?.({ block: "nearest" });
+  });
+}
+
+function requiredSlotDefinition(slotName: string) {
+  return slots.value.find((slot) => slot.name === slotName);
+}
+
+function requiredSlotDefaultOptions(slotName: string) {
+  const slot = requiredSlotDefinition(slotName);
+  if (!slot || slot.value_type !== "enum" || !slot.enum_group) return [];
+  return (enumGroups.value[slot.enum_group] ?? []).filter(
+    (value) => value.enabled !== false,
+  );
+}
+
+function addRequiredSlot() {
+  applyLocal(() => {
+    const used = new Set(
+      intentForm.required_slots.map((requirement) => requirement.slot_name),
+    );
+    const slot = slots.value.find((item) => item.enabled && !used.has(item.name));
+    if (!slot) throw new Error("没有可继续添加的已启用 Slot");
+    intentForm.required_slots.push({
+      slot_name: slot.name,
+      default_value: null,
+    });
+  });
+}
+
+function changeRequiredSlot(requirement: IntentRequiredSlot) {
+  requirement.default_value = null;
+}
+
+function removeRequiredSlot(index: number) {
+  intentForm.required_slots.splice(index, 1);
 }
 
 function addUtterance() {
@@ -1163,6 +1288,33 @@ function saveIntentForm() {
     )
   )
     throw new Error(`Intent 标识 ${name} 已存在`);
+
+  const requiredSlots = intentForm.required_slots.map((requirement) => ({
+    slot_name: requirement.slot_name.trim(),
+    default_value: requirement.default_value?.trim() || null,
+  }));
+  if (requiredSlots.some((requirement) => !requirement.slot_name))
+    throw new Error("必填参数必须选择一个 Slot");
+  if (
+    new Set(requiredSlots.map((requirement) => requirement.slot_name)).size !==
+    requiredSlots.length
+  )
+    throw new Error("同一个 Slot 不能重复配置为必填参数");
+  for (const requirement of requiredSlots) {
+    const slot = slots.value.find(
+      (item) => item.name === requirement.slot_name && item.enabled,
+    );
+    if (!slot) throw new Error(`必填参数 ${requirement.slot_name} 不存在或未启用`);
+    if (slot.value_type === "enum" && requirement.default_value) {
+      const allowed = requiredSlotDefaultOptions(slot.name).some(
+        (value) => value.canonical === requirement.default_value,
+      );
+      if (!allowed)
+        throw new Error(`必填参数 ${slot.zh} 的默认值必须选择已启用的标准值`);
+    }
+    if (route === "training_business" && !requirement.default_value)
+      throw new Error(`训练业务不能追问，必填参数 ${slot.zh} 必须设置默认值`);
+  }
 
   const oldName = selectedIntentName.value;
   const existingIntentExamples = examples.value.filter(
@@ -1195,6 +1347,7 @@ function saveIntentForm() {
     description,
     enabled: intentForm.enabled,
     aliases: [...(intentForm.aliases ?? [])],
+    required_slots: requiredSlots,
     ...(intentForm.mapping_note
       ? { mapping_note: intentForm.mapping_note }
       : {}),
@@ -1528,13 +1681,43 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
           <el-button type="primary" @click="newIntent()">新增 Intent</el-button>
         </div>
         <div v-if="draft.draft_json" class="intent-manager">
-          <aside class="intent-sidebar">
-            <el-input
-              v-model="intentSearch"
-              clearable
-              aria-label="搜索 Intent"
-              placeholder="搜索 Route / Intent"
-            />
+          <aside ref="intentSidebarRef" class="intent-sidebar">
+            <div class="intent-sidebar-toolbar">
+              <el-input
+                v-model="intentSearch"
+                clearable
+                aria-label="搜索 Intent"
+                placeholder="搜索 Route / Intent"
+              />
+              <el-button
+                circle
+                aria-label="全部展开"
+                title="全部展开"
+                @click="setAllIntentRoutesExpanded(true)"
+              >
+                <svg
+                  class="intent-tree-toolbar-icon"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path d="m7 8 5 5 5-5M7 3l5 5 5-5" />
+                </svg>
+              </el-button>
+              <el-button
+                circle
+                aria-label="全部收起"
+                title="全部收起"
+                @click="setAllIntentRoutesExpanded(false)"
+              >
+                <svg
+                  class="intent-tree-toolbar-icon"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path d="m7 16 5-5 5 5M7 21l5-5 5 5" />
+                </svg>
+              </el-button>
+            </div>
             <el-tree
               ref="intentTreeRef"
               class="intent-tree"
@@ -1543,11 +1726,7 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
               default-expand-all
               highlight-current
               :expand-on-click-node="false"
-              :current-node-key="
-                selectedIntentName
-                  ? intentNodeKey(selectedIntentName)
-                  : undefined
-              "
+              :current-node-key="currentIntentTreeKey"
               :filter-node-method="filterIntentTreeNode"
               empty-text="暂无 Route"
               @node-click="handleIntentTreeNodeClick"
@@ -1587,8 +1766,53 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
             </el-tree>
           </aside>
           <div class="intent-detail">
+            <template v-if="selectedRoute">
+              <div class="intent-detail-heading route-intent-heading">
+                <div>
+                  <h3>{{ selectedRoute.zh }}</h3>
+                  <small>{{ selectedRoute.name }}</small>
+                </div>
+                <el-button
+                  type="primary"
+                  @click="newIntent(selectedRoute.name)"
+                >
+                  新增 Intent
+                </el-button>
+              </div>
+              <p class="route-intent-description">
+                {{ selectedRoute.description }}
+              </p>
+              <el-table
+                v-if="selectedRouteIntents.length"
+                :data="selectedRouteIntents"
+                row-key="name"
+                class="route-intent-table"
+              >
+                <el-table-column prop="name" label="Intent 标识" min-width="170" />
+                <el-table-column prop="zh" label="名称" min-width="120" />
+                <el-table-column prop="description" label="说明" min-width="220" />
+                <el-table-column label="操作" width="160" fixed="right">
+                  <template #default="{ row }">
+                    <el-button link type="primary" @click="locateIntent(row)">
+                      跳转定位
+                    </el-button>
+                    <el-button link type="danger" @click="deleteIntent(row.name)">
+                      删除
+                    </el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <el-empty v-else description="该 Route 下暂无 Intent">
+                <el-button
+                  type="primary"
+                  @click="newIntent(selectedRoute.name)"
+                >
+                  新增 Intent
+                </el-button>
+              </el-empty>
+            </template>
             <el-empty
-              v-if="!isNewIntent && !selectedIntentName"
+              v-else-if="!isNewIntent && !selectedIntentName"
               description="请选择或新增一个 Intent"
             />
             <template v-else>
@@ -1643,6 +1867,87 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
                     :rows="3"
                   />
                 </label>
+              </div>
+              <div class="utterance-editor">
+                <div class="intent-required-heading">
+                  <div>
+                    <h3>必填参数</h3>
+                    <p>
+                      识别到当前 Intent 后校验这些 Slot；未提取到时优先使用默认值，未设置默认值则向用户追问。
+                    </p>
+                  </div>
+                  <el-button @click="addRequiredSlot">添加必填参数</el-button>
+                </div>
+                <div class="intent-required-list">
+                  <div
+                    v-for="(requirement, index) in intentForm.required_slots"
+                    :key="`${requirement.slot_name}-${index}`"
+                    class="intent-required-row"
+                  >
+                    <label>
+                      <span>参数 Slot</span>
+                      <el-select
+                        v-model="requirement.slot_name"
+                        filterable
+                        :aria-label="`必填参数 ${index + 1} Slot`"
+                        @change="changeRequiredSlot(requirement)"
+                      >
+                        <el-option
+                          v-for="slot in slots.filter((item) => item.enabled)"
+                          :key="slot.name"
+                          :label="`${slot.zh} (${slot.name})`"
+                          :value="slot.name"
+                          :disabled="
+                            intentForm.required_slots.some(
+                              (item, itemIndex) =>
+                                itemIndex !== index &&
+                                item.slot_name === slot.name,
+                            )
+                          "
+                        />
+                      </el-select>
+                    </label>
+                    <label>
+                      <span>默认值（可选）</span>
+                      <el-select
+                        v-if="
+                          requiredSlotDefinition(requirement.slot_name)
+                            ?.value_type === 'enum'
+                        "
+                        v-model="requirement.default_value"
+                        clearable
+                        :aria-label="`必填参数 ${index + 1} 默认值`"
+                        placeholder="留空则缺失时追问"
+                      >
+                        <el-option
+                          v-for="value in requiredSlotDefaultOptions(
+                            requirement.slot_name,
+                          )"
+                          :key="value.canonical"
+                          :label="`${value.display} (${value.canonical})`"
+                          :value="value.canonical"
+                        />
+                      </el-select>
+                      <el-input
+                        v-else
+                        v-model="requirement.default_value"
+                        clearable
+                        :aria-label="`必填参数 ${index + 1} 默认值`"
+                        placeholder="留空则缺失时追问"
+                      />
+                    </label>
+                    <el-button
+                      link
+                      type="danger"
+                      @click="removeRequiredSlot(index)"
+                    >
+                      删除
+                    </el-button>
+                  </div>
+                  <p v-if="!intentForm.required_slots.length" class="empty-group">
+                    当前 Intent 没有必填参数
+                  </p>
+                </div>
               </div>
               <div class="utterance-editor">
                 <h3>典型用户说法</h3>

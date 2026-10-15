@@ -353,6 +353,27 @@ class RouteDefinition(ContractModel):
     enabled: bool
 
 
+class IntentRequiredSlot(ContractModel):
+    slot_name: str = Field(min_length=1)
+    default_value: str | None = None
+
+    @field_validator("slot_name")
+    @classmethod
+    def trim_slot_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("required slot name must not be blank")
+        return normalized
+
+    @field_validator("default_value")
+    @classmethod
+    def normalize_default_value(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
 class IntentDefinition(ContractModel):
     name: str = Field(min_length=1)
     zh: str = Field(min_length=1)
@@ -361,6 +382,7 @@ class IntentDefinition(ContractModel):
     enabled: bool
     aliases: list[str] = Field(default_factory=list)
     mapping_note: str | None = None
+    required_slots: list[IntentRequiredSlot] = Field(default_factory=list)
 
     @field_validator("aliases")
     @classmethod
@@ -368,6 +390,14 @@ class IntentDefinition(ContractModel):
         if any(not item.strip() for item in value):
             raise ValueError("intent aliases must not be blank")
         return value
+
+    @model_validator(mode="after")
+    def required_slots_must_be_unique(self) -> IntentDefinition:
+        _ensure_unique(
+            [requirement.slot_name for requirement in self.required_slots],
+            f"intent {self.name} required slot names",
+        )
+        return self
 
 
 class SlotDefinition(ContractModel):
@@ -484,11 +514,41 @@ class RuntimeConfigSnapshot(ContractModel):
                 raise ValueError(f"slot {slot.name} references an unknown enum_group")
 
         intents_by_name = {item.name: item for item in self.intents}
+        slots_by_name = {item.name: item for item in self.slots}
         route_name_set = set(route_names)
         _ensure_unique([example.text for example in self.examples], "example texts")
         for intent in self.intents:
             if intent.route not in route_name_set:
                 raise ValueError(f"intent {intent.name} references unknown route {intent.route}")
+            for requirement in intent.required_slots:
+                slot = slots_by_name.get(requirement.slot_name)
+                if slot is None:
+                    raise ValueError(
+                        f"intent {intent.name} references unknown required slot "
+                        f"{requirement.slot_name}"
+                    )
+                if not slot.enabled:
+                    raise ValueError(
+                        f"intent {intent.name} references disabled required slot "
+                        f"{requirement.slot_name}"
+                    )
+                if requirement.default_value is not None and slot.value_type == "enum":
+                    assert slot.enum_group is not None
+                    allowed_defaults = {
+                        value.canonical
+                        for value in self.enums[slot.enum_group]
+                        if value.enabled
+                    }
+                    if requirement.default_value not in allowed_defaults:
+                        raise ValueError(
+                            f"intent {intent.name} default for required slot "
+                            f"{requirement.slot_name} must be an enabled canonical enum value"
+                        )
+                if intent.route == "training_business" and requirement.default_value is None:
+                    raise ValueError(
+                        f"training intent {intent.name} required slot "
+                        f"{requirement.slot_name} needs a default because training cannot clarify"
+                    )
         for example in self.examples:
             if example.route not in route_name_set:
                 raise ValueError(f"example references unknown route {example.route}")
@@ -547,8 +607,11 @@ class OutputValidationIssue(ContractModel):
         "SLOT_SPAN_INVALID",
         "INTENTS_EMPTY_NON_TRAINING",
         "CLARIFICATION_FORCED_OFF",
+        "REQUIRED_SLOT_DEFAULT_APPLIED",
+        "REQUIRED_SLOT_MISSING",
     ]
     slot: SlotValue | None = None
+    required_slot: str | None = None
     # Trace-only marker.  It is never part of the public IntentResult contract.
     truncated: bool = False
 
@@ -763,9 +826,28 @@ def validate_recognition_output(
         text=text,
     )
     merged = _merge_slots(validated.result.slots, program_slots or [])
+    selected_intent = (
+        validated.result.intents[0].name if validated.result.intents else None
+    )
+    merged, required_questions, requirement_issues = _apply_required_slots(
+        config,
+        selected_intent,
+        merged,
+    )
+    need_clarification = validated.result.need_clarification or bool(required_questions)
+    clarification = _combine_clarifications(
+        required_questions,
+        validated.result.clarification,
+    )
     return ValidatedIntentOutput(
-        result=validated.result.model_copy(update={"slots": merged}),
-        validation_issues=validated.validation_issues,
+        result=validated.result.model_copy(
+            update={
+                "slots": merged,
+                "need_clarification": need_clarification,
+                "clarification": clarification,
+            }
+        ),
+        validation_issues=[*validated.validation_issues, *requirement_issues],
     )
 
 
@@ -784,6 +866,7 @@ def validate_recognition_output_v2(
     issues: list[OutputValidationIssue] = []
     scoped_program_slots = program_slots_by_action or {}
     scoped_action_ranges = action_ranges or {}
+    required_questions: list[str] = []
     for action in sorted(output.actions, key=lambda item: item.order):
         candidate_intents = [action.intent] if action.intent is not None else []
         validated = validate_recognition_output(
@@ -816,8 +899,15 @@ def validate_recognition_output_v2(
                 depends_on=action.depends_on,
             )
         )
+        if validated.result.need_clarification and validated.result.clarification:
+            required_questions.append(validated.result.clarification)
         issues.extend(validated.validation_issues)
 
+    need_clarification = output.need_clarification or bool(required_questions)
+    clarification = _combine_clarifications(
+        required_questions,
+        output.clarification,
+    )
     return ValidatedIntentOutputV2(
         result=IntentResultV2(
             request_id=request_id,
@@ -826,8 +916,8 @@ def validate_recognition_output_v2(
             composition=output.composition,
             actions=actions,
             risk=output.risk,
-            need_clarification=output.need_clarification,
-            clarification=output.clarification,
+            need_clarification=need_clarification,
+            clarification=clarification,
         ),
         validation_issues=issues,
     )
@@ -841,6 +931,72 @@ def _merge_slots(model_slots: list[SlotValue], program_slots: list[SlotValue]) -
         merged.values(),
         key=lambda slot: (slot.start, slot.end, slot.name, slot.value),
     )
+
+
+def _apply_required_slots(
+    snapshot: RuntimeConfigSnapshot,
+    intent_name: str | None,
+    slots: list[SlotValue],
+) -> tuple[list[SlotValue], list[str], list[OutputValidationIssue]]:
+    if intent_name is None:
+        return slots, [], []
+    intent = next(
+        (item for item in snapshot.active_intents if item.name == intent_name),
+        None,
+    )
+    if intent is None or not intent.required_slots:
+        return slots, [], []
+
+    slots_by_name = {item.name: item for item in snapshot.active_slots}
+    present_names = {slot.name for slot in slots}
+    normalized = list(slots)
+    missing_labels: list[str] = []
+    issues: list[OutputValidationIssue] = []
+    for requirement in intent.required_slots:
+        if requirement.slot_name in present_names:
+            continue
+        definition = slots_by_name[requirement.slot_name]
+        if requirement.default_value is None:
+            missing_labels.append(f"{definition.zh}（{definition.name}）")
+            issues.append(
+                OutputValidationIssue(
+                    code="REQUIRED_SLOT_MISSING",
+                    required_slot=definition.name,
+                )
+            )
+            continue
+        defaulted = SlotValue(
+            name=definition.name,
+            zh=definition.zh,
+            value=requirement.default_value,
+            start=0,
+            end=0,
+            confidence=1,
+        )
+        normalized.append(defaulted)
+        present_names.add(definition.name)
+        issues.append(
+            OutputValidationIssue(
+                code="REQUIRED_SLOT_DEFAULT_APPLIED",
+                slot=defaulted,
+                required_slot=definition.name,
+            )
+        )
+
+    questions = (
+        [f"请补充必填参数：{'、'.join(missing_labels)}"] if missing_labels else []
+    )
+    return normalized, questions, issues
+
+
+def _combine_clarifications(
+    required_questions: list[str],
+    existing: str | None,
+) -> str | None:
+    questions = list(dict.fromkeys(required_questions))
+    if existing and existing not in questions:
+        questions.append(existing)
+    return "；".join(questions) if questions else None
 
 
 def _find_unique_value_span_in_range(

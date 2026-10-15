@@ -381,6 +381,24 @@
   background: #f8fafc;
   overflow: auto;
 }
+.intent-sidebar-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+.intent-sidebar-toolbar .el-button + .el-button {
+  margin-left: 0;
+}
+.intent-tree-toolbar-icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
 .intent-tree {
   margin-top: 12px;
   background: transparent;
@@ -444,6 +462,14 @@
 .intent-detail-heading h3 {
   margin: 0 0 3px;
 }
+.route-intent-description {
+  margin: -6px 0 18px;
+  color: #667085;
+  line-height: 1.7;
+}
+.route-intent-table {
+  width: 100%;
+}
 .intent-form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -463,6 +489,36 @@
 }
 .utterance-editor h3 {
   margin: 0 0 8px;
+}
+.intent-required-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.intent-required-heading p {
+  max-width: 640px;
+  margin: 0;
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.intent-required-list {
+  margin-top: 10px;
+  border-top: 1px solid #edf0f5;
+}
+.intent-required-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.9fr) minmax(220px, 1.1fr) auto;
+  align-items: end;
+  gap: 12px;
+  padding: 12px 2px;
+  border-bottom: 1px solid #edf0f5;
+}
+.intent-required-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .utterance-add {
   display: grid;
@@ -928,6 +984,7 @@
 @media (max-width: 900px) {
   .intent-manager,
   .intent-form-grid,
+  .intent-required-row,
   .enum-manager,
   .prompt-editor-layout,
   .prompt-preview-workbench,
@@ -949,6 +1006,7 @@
     grid-template-columns: 1fr;
   }
   .config-page-intro,
+  .intent-required-heading,
   .enum-detail-heading {
     flex-direction: column;
   }
