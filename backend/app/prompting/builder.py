@@ -399,24 +399,6 @@ def _render_output_contract(output_version: Literal[1, 2]) -> str:
         return _render_compound_output_contract()
 
     schema = canonical_json(LLMRecognitionOutput.model_json_schema())
-    example = canonical_json(
-        {
-            "route": "social_chat",
-            "intents": [
-                {
-                    "name": "greeting",
-                    "zh": "问候",
-                    "confidence": 0.99,
-                }
-            ],
-            "slots": [],
-            "risk": None,
-            "need_clarification": False,
-            "clarification": None,
-            "reason_summary": "用户正在问候",
-            "evidence": [{"type": "user_text", "text": "你好"}],
-        }
-    )
     return (
         "## 输出要求\n\n"
         "只返回一个符合下方 JSON Schema 的 JSON 对象，不要补充解释或 Markdown。\n"
@@ -425,57 +407,16 @@ def _render_output_contract(output_version: Literal[1, 2]) -> str:
         "程序候选型参数的 value 必须来源于对应基础 Slot 候选；备注要求转换时返回转换后的最终值。\n"
         "开放文本 value 必须复制用户原话；所有参数都必须遵守所选 Intent 中配置的备注。\n"
         "evidence 必须是对象数组；没有证据时返回空数组。\n\n"
-        f"### JSON Schema\n\n{schema}\n\n"
-        f"### 标准示例\n\n{example}"
+        f"### JSON Schema\n\n{schema}"
     )
 
 
 def _render_compound_output_contract() -> str:
     schema = canonical_json(LLMRecognitionOutputV2.model_json_schema())
-    example = canonical_json(
-        {
-            "schema_version": 2,
-            "is_compound": True,
-            "composition": "parallel",
-            "actions": [
-                {
-                    "action_id": "action_1",
-                    "source_text": "调高音量",
-                    "route": "dialogue_device_control",
-                    "intent": {
-                        "name": "volume_up",
-                        "zh": "调高音量",
-                        "confidence": 0.99,
-                    },
-                    "slots": [],
-                    "order": 1,
-                    "depends_on": [],
-                },
-                {
-                    "action_id": "action_2",
-                    "source_text": "回答我今天的训练计划",
-                    "route": "information_query",
-                    "intent": {
-                        "name": "query_schedule",
-                        "zh": "查询训练日程",
-                        "confidence": 0.96,
-                    },
-                    "slots": [],
-                    "order": 2,
-                    "depends_on": [],
-                },
-            ],
-            "risk": None,
-            "need_clarification": False,
-            "clarification": None,
-            "reason_summary": "用户同时要求调整音量并查询训练计划",
-            "evidence": [{"type": "user_text", "text": "调高音量并回答我今天的训练计划"}],
-        }
-    )
     return (
         "## 输出要求（复合意图 V2）\n\n"
         "只返回一个符合下方 JSON Schema 的 JSON 对象，不要补充解释或 Markdown。\n"
-        "把用户表达的每个独立、可执行意图拆成一个 action，不得把跨 Route 意图合并，也不得因动作数量多而省略。\n"
+        "把用户表达的每个独立业务意图拆成一个 action，不得把跨 Route 意图合并，也不得因动作数量多而省略。\n"
         "actions 不设数量上限；action_id 按 action_1、action_2 递增，order 从 1 连续递增。\n"
         "单动作使用 single；“并且/同时”使用 parallel 且 depends_on 为空；“先…再…”使用 sequential，后续动作依赖前序动作；“或者”使用 alternative、depends_on 为空，并要求澄清。\n"
         "每个 action 的 source_text 必须逐字复制该动作对应的连续用户原话，不含连接词；不得改写。\n"
@@ -483,8 +424,7 @@ def _render_compound_output_contract() -> str:
         "程序候选型 value 必须来源于对应候选列表；备注要求转换时返回转换后的最终值，并遵守备注。\n"
         "未配置字段映射时 slot.name 使用基础 Slot 名；intent 必须使用 name、zh、confidence 字段。\n"
         "evidence 必须是对象数组；没有证据时返回空数组。\n\n"
-        f"### JSON Schema\n\n{schema}\n\n"
-        f"### 标准示例\n\n{example}"
+        f"### JSON Schema\n\n{schema}"
     )
 
 

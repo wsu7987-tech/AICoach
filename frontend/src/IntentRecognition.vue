@@ -5,6 +5,7 @@ import { ElMessage } from "element-plus";
 import {
   analyzeIntent,
   getIntentLatencyAnalysis,
+  getIntentModelOutput,
   getIntentPrompt,
   IntentApiError,
   type IntentLatencyAnalysis,
@@ -54,6 +55,10 @@ const latencyAnalysis = ref<IntentLatencyAnalysis | null>(null);
 const latencyAnalysisLoading = ref(false);
 const latencyAnalysisError = ref("");
 const jsonCopied = ref(false);
+const modelOutputText = ref("");
+const modelOutputLoading = ref(false);
+const modelOutputError = ref("");
+let recognitionVersion = 0;
 const promptDialogVisible = ref(false);
 const promptLoading = ref(false);
 const promptError = ref("");
@@ -124,9 +129,14 @@ const latencyVerdict = computed(() => {
   }
   return { label: "偏慢", type: "warning" as const, detail: "暂无足够历史样本用于对比" };
 });
-const resultJson = computed(() =>
-  result.value ? JSON.stringify(result.value, null, 2) : "",
-);
+const resultJson = computed(() => {
+  if (!modelOutputText.value) return "";
+  try {
+    return JSON.stringify(JSON.parse(modelOutputText.value), null, 2);
+  } catch {
+    return modelOutputText.value;
+  }
+});
 
 function readableError(value: unknown): string {
   if (!(value instanceof IntentApiError)) {
@@ -184,6 +194,7 @@ async function loadModels() {
 
 async function recognize() {
   if (!canSubmit.value) return;
+  const version = ++recognitionVersion;
   recognizing.value = true;
   error.value = "";
   result.value = null;
@@ -194,6 +205,9 @@ async function recognize() {
   latencyAnalysisError.value = "";
   latencyAnalysisLoading.value = false;
   jsonCopied.value = false;
+  modelOutputText.value = "";
+  modelOutputLoading.value = false;
+  modelOutputError.value = "";
   promptDialogVisible.value = false;
   promptLoading.value = false;
   promptError.value = "";
@@ -215,21 +229,51 @@ async function recognize() {
     elapsedMs.value = Math.round(performance.now() - started);
     result.value = recognized;
     recognizing.value = false;
-    latencyAnalysisLoading.value = true;
-    try {
-      latencyAnalysis.value = await getIntentLatencyAnalysis(
-        recognized.request_id,
-        modelUid,
-      );
-    } catch {
-      latencyAnalysisError.value = "服务端耗时明细暂不可用，已保留端到端用时。";
-    } finally {
-      latencyAnalysisLoading.value = false;
-    }
+    await Promise.all([loadLatencyAnalysis(), loadModelOutput()]);
   } catch (value) {
-    error.value = readableError(value);
+    if (version === recognitionVersion) error.value = readableError(value);
   } finally {
-    recognizing.value = false;
+    if (version === recognitionVersion) recognizing.value = false;
+  }
+}
+
+async function loadLatencyAnalysis() {
+  if (!result.value || !resultModelUid.value) return;
+  const version = recognitionVersion;
+  latencyAnalysisLoading.value = true;
+  try {
+    const analysis = await getIntentLatencyAnalysis(
+      result.value.request_id,
+      resultModelUid.value,
+    );
+    if (version === recognitionVersion) latencyAnalysis.value = analysis;
+  } catch {
+    if (version === recognitionVersion) {
+      latencyAnalysisError.value = "服务端耗时明细暂不可用，已保留端到端用时。";
+    }
+  } finally {
+    if (version === recognitionVersion) latencyAnalysisLoading.value = false;
+  }
+}
+
+async function loadModelOutput() {
+  if (!result.value || !resultModelUid.value || modelOutputLoading.value) return;
+  const version = recognitionVersion;
+  modelOutputLoading.value = true;
+  modelOutputError.value = "";
+  try {
+    const output = await getIntentModelOutput(
+      result.value.request_id,
+      resultModelUid.value,
+    );
+    if (version === recognitionVersion) modelOutputText.value = output.content;
+  } catch (value) {
+    if (version === recognitionVersion) {
+      modelOutputError.value =
+        value instanceof Error ? value.message : "LLM 原始 JSON 加载失败，请重试";
+    }
+  } finally {
+    if (version === recognitionVersion) modelOutputLoading.value = false;
   }
 }
 
@@ -436,7 +480,7 @@ onMounted(() => void loadModels());
           </section>
 
           <section class="result-section action-list-section">
-            <h3>分动作识别结果</h3>
+            <h3>分动作识别结果（后端处理后）</h3>
             <div class="action-list">
               <article
                 v-for="action in result.actions"
@@ -591,21 +635,40 @@ onMounted(() => void loadModels());
             v-if="result.need_clarification"
             class="result-section clarification"
           >
-            <h3>需要补充信息</h3>
+            <h3>需要补充信息（后端处理后）</h3>
             <p>{{ result.clarification }}</p>
           </section>
 
           <section class="result-section json-output-section">
             <div class="json-output-heading">
               <div>
-                <h3>JSON 输出</h3>
-                <p>每个意图都在 actions 数组中独立成项，可直接交给下游编排。</p>
+                <h3>LLM 原始 JSON</h3>
+                <p>本次模型生成的原始内容，仅格式化缩进；调用记录中的敏感内容已脱敏。</p>
               </div>
-              <el-button size="small" plain @click="copyResultJson">
+              <el-button
+                size="small"
+                plain
+                :disabled="!resultJson || modelOutputLoading"
+                @click="copyResultJson"
+              >
                 {{ jsonCopied ? "已复制" : "复制 JSON" }}
               </el-button>
             </div>
-            <pre><code>{{ resultJson }}</code></pre>
+            <p v-if="modelOutputLoading" class="empty-value">
+              正在读取 LLM 原始 JSON…
+            </p>
+            <div v-else-if="modelOutputError">
+              <el-alert
+                :title="modelOutputError"
+                type="error"
+                show-icon
+                :closable="false"
+              />
+              <el-button size="small" plain @click="loadModelOutput">
+                重新读取
+              </el-button>
+            </div>
+            <pre v-else><code>{{ resultJson }}</code></pre>
           </section>
         </div>
       </section>

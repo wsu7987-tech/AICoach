@@ -107,6 +107,20 @@ async def intent_prompt(
     )
 
 
+@router.get("/intent/model-output")
+async def intent_model_output(
+    request: Request,
+    request_id: str = Query(min_length=1, max_length=128),
+    model_uid: str = Query(pattern=r"^mdl_[a-f0-9]{64}$"),
+):
+    sessions, _, _ = _components(request)
+    return await debug_service.intent_model_output(
+        sessions,
+        request_id=request_id,
+        model_uid=model_uid,
+    )
+
+
 @router.post("/traces/{trace_id}/replay")
 async def replay(trace_id: str, body: ReplayInput, request: Request, session: Session):
     sessions, factory, managed_model_loader = _components(request)

@@ -372,6 +372,58 @@ async def intent_prompt(
     }
 
 
+async def intent_model_output(
+    sessions: async_sessionmaker,
+    *,
+    request_id: str,
+    model_uid: str,
+) -> dict[str, str]:
+    """Read the persisted model message without runtime normalization."""
+
+    async with sessions() as session:
+        trace_id = await session.scalar(
+            select(IntentRequestTrace.trace_id)
+            .where(
+                IntentRequestTrace.request_id == request_id,
+                IntentRequestTrace.source == "runtime",
+                IntentRequestTrace.managed_model_uid == model_uid,
+            )
+            .order_by(IntentRequestTrace.created_at.desc(), IntentRequestTrace.id.desc())
+            .limit(1)
+        )
+        if trace_id is None:
+            raise config_service.ConfigError(
+                "TRACE_NOT_FOUND", "本次识别的模型输出记录不可用", 404
+            )
+        attempt = await session.scalar(
+            select(LLMCallTrace)
+            .where(
+                LLMCallTrace.trace_id == trace_id,
+                LLMCallTrace.status == "succeeded",
+            )
+            .order_by(LLMCallTrace.attempt_no.desc())
+            .limit(1)
+        )
+    if attempt is None:
+        raise config_service.ConfigError(
+            "MODEL_OUTPUT_NOT_FOUND", "本次识别未保存可查看的模型输出", 404
+        )
+    response = attempt.raw_response_json or {}
+    if attempt.raw_response_truncated or response.get("truncated") is True:
+        raise config_service.ConfigError(
+            "MODEL_OUTPUT_TRUNCATED", "模型响应记录已截断，无法展示完整的 LLM 原始 JSON", 409
+        )
+    choices = response.get("choices")
+    choice = choices[0] if isinstance(choices, list) and choices else None
+    message = choice.get("message") if isinstance(choice, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, str) or not content.strip():
+        raise config_service.ConfigError(
+            "MODEL_OUTPUT_NOT_FOUND", "本次识别未保存可查看的模型输出正文", 404
+        )
+    return {"content": content}
+
+
 def diff(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
     fields = {
         "input": (left["input"], right["input"]),

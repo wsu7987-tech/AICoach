@@ -73,6 +73,10 @@ export interface IntentPrompt {
   truncated: boolean;
 }
 
+export interface IntentModelOutput {
+  content: string;
+}
+
 export class IntentApiError extends Error {
   constructor(
     public code: string,
@@ -141,4 +145,31 @@ export async function getIntentPrompt(
     );
   }
   return data as IntentPrompt;
+}
+
+export async function getIntentModelOutput(
+  requestId: string,
+  modelUid: string,
+): Promise<IntentModelOutput> {
+  const query = new URLSearchParams({
+    request_id: requestId,
+    model_uid: modelUid,
+  });
+  const response = await fetch(`/api/admin/intent/model-output?${query}`);
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new IntentApiError(
+      data?.error_code ?? "HTTP_ERROR",
+      data?.message ?? `LLM 原始 JSON 加载失败（HTTP ${response.status}）`,
+      response.status,
+    );
+  }
+  if (typeof data?.content !== "string" || !data.content.trim()) {
+    throw new IntentApiError(
+      "MODEL_OUTPUT_NOT_FOUND",
+      "本次识别的 LLM 原始 JSON 不可用",
+      response.status,
+    );
+  }
+  return data as IntentModelOutput;
 }
