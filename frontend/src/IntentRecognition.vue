@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 
 import {
@@ -13,8 +13,12 @@ import {
 } from "./intentApi";
 import { modelApi, type ManagedModel } from "./modelApi";
 
+const props = withDefaults(defineProps<{ batch?: boolean }>(), {
+  batch: false,
+});
+
 const emit = defineEmits<{
-  navigate: [path: "/models" | "/config"];
+  navigate: [path: "/models" | "/config/routes"];
 }>();
 
 const routeLabels: Record<string, string> = {
@@ -66,6 +70,70 @@ const promptText = ref("");
 const promptTruncated = ref(false);
 const promptCopied = ref(false);
 
+type BatchRun = {
+  id: number;
+  line: number;
+  repetition: number;
+  text: string;
+  modelUid: string;
+  modelLabel: string;
+  status: "queued" | "running" | "success" | "failed" | "cancelled";
+  result: IntentResult | null;
+  elapsedMs: number | null;
+  error: string;
+};
+
+const repeat = ref<1 | 3 | 5>(1);
+const batchRuns = ref<BatchRun[]>([]);
+const selectedRunId = ref<number | null>(null);
+const stopRequested = ref(false);
+let disposed = false;
+const batchLines = computed(() =>
+  text.value
+    .split(/\r\n|\n|\r/)
+    .map((value, index) => ({
+      text: value.trim(),
+      line: index + 1,
+    }))
+    .filter((item) => item.text),
+);
+const batchInputError = computed(() => {
+  const tooLong = batchLines.value.find((item) => [...item.text].length > 2000);
+  if (tooLong) return `第 ${tooLong.line} 行超过 2000 字，请缩短后再调试。`;
+  if (batchLines.value.length * repeat.value > 100) {
+    return "每批最多执行 100 次，请减少输入条数或重复次数。";
+  }
+  return "";
+});
+const batchSuccess = computed(
+  () => batchRuns.value.filter((run) => run.status === "success").length,
+);
+const batchFailed = computed(
+  () => batchRuns.value.filter((run) => run.status === "failed").length,
+);
+const batchCancelled = computed(
+  () => batchRuns.value.filter((run) => run.status === "cancelled").length,
+);
+const batchCompleted = computed(() => batchSuccess.value + batchFailed.value);
+const selectedRun = computed(() =>
+  batchRuns.value.find((run) => run.id === selectedRunId.value),
+);
+const runStatusLabels: Record<BatchRun["status"], string> = {
+  queued: "等待中",
+  running: "识别中",
+  success: "成功",
+  failed: "失败",
+  cancelled: "已停止",
+};
+
+function batchRowClass({ row }: { row: BatchRun }): string {
+  return row.id === selectedRunId.value ? "selected-batch-row" : "";
+}
+
+function runStatusLabel(run: BatchRun): string {
+  return runStatusLabels[run.status];
+}
+
 const enabledModels = computed(() =>
   models.value.filter((model) => model.enabled),
 );
@@ -76,7 +144,10 @@ const selectedModel = computed(() =>
 );
 const canSubmit = computed(
   () =>
-    Boolean(text.value.trim() && selectedModelUid.value) && !recognizing.value,
+    Boolean(text.value.trim() && selectedModel.value) &&
+    !recognizing.value &&
+    !loadingModels.value &&
+    (!props.batch || !batchInputError.value),
 );
 const providerLatencyMs = computed(
   () => latencyAnalysis.value?.current.provider_latency_ms ?? null,
@@ -87,7 +158,10 @@ const applicationLatencyMs = computed(() => {
 });
 const providerLatencyRatio = computed(() => {
   if (!elapsedMs.value || providerLatencyMs.value === null) return 0;
-  return Math.min(100, Math.round((providerLatencyMs.value / elapsedMs.value) * 100));
+  return Math.min(
+    100,
+    Math.round((providerLatencyMs.value / elapsedMs.value) * 100),
+  );
 });
 const latencyVerdict = computed(() => {
   const current = providerLatencyMs.value ?? elapsedMs.value;
@@ -122,12 +196,24 @@ const latencyVerdict = computed(() => {
     };
   }
   if (current <= 3000) {
-    return { label: "较快", type: "success" as const, detail: "本次耗时不超过 3 秒" };
+    return {
+      label: "较快",
+      type: "success" as const,
+      detail: "本次耗时不超过 3 秒",
+    };
   }
   if (current <= 10000) {
-    return { label: "正常", type: "info" as const, detail: "暂无足够历史样本用于对比" };
+    return {
+      label: "正常",
+      type: "info" as const,
+      detail: "暂无足够历史样本用于对比",
+    };
   }
-  return { label: "偏慢", type: "warning" as const, detail: "暂无足够历史样本用于对比" };
+  return {
+    label: "偏慢",
+    type: "warning" as const,
+    detail: "暂无足够历史样本用于对比",
+  };
 });
 const resultJson = computed(() => {
   if (!modelOutputText.value) return "";
@@ -192,11 +278,8 @@ async function loadModels() {
   }
 }
 
-async function recognize() {
-  if (!canSubmit.value) return;
-  const version = ++recognitionVersion;
-  recognizing.value = true;
-  error.value = "";
+function resetResult() {
+  ++recognitionVersion;
   result.value = null;
   elapsedMs.value = null;
   resultModelLabel.value = "";
@@ -214,6 +297,93 @@ async function recognize() {
   promptText.value = "";
   promptTruncated.value = false;
   promptCopied.value = false;
+}
+
+async function selectRun(run: BatchRun) {
+  if (!run.result || disposed) return;
+  resetResult();
+  selectedRunId.value = run.id;
+  result.value = run.result;
+  elapsedMs.value = run.elapsedMs;
+  resultModelUid.value = run.modelUid;
+  resultModelLabel.value = run.modelLabel;
+  await Promise.all([loadLatencyAnalysis(), loadModelOutput()]);
+}
+
+async function executeBatch(queue: BatchRun[]) {
+  if (recognizing.value || !queue.length || disposed) return;
+  recognizing.value = true;
+  stopRequested.value = false;
+  error.value = "";
+  for (const run of queue) {
+    run.status = "queued";
+    run.error = "";
+    run.elapsedMs = null;
+    run.result = null;
+  }
+  try {
+    for (const run of queue) {
+      if (stopRequested.value || disposed) break;
+      run.status = "running";
+      const started = performance.now();
+      try {
+        run.result = await analyzeIntent({
+          text: run.text,
+          context: {},
+          model_uid: run.modelUid,
+        });
+        run.status = "success";
+      } catch (value) {
+        run.error = readableError(value);
+        run.status = "failed";
+      } finally {
+        run.elapsedMs = Math.round(performance.now() - started);
+      }
+      if (run.result && selectedRunId.value === null && !disposed) {
+        void selectRun(run);
+      }
+    }
+  } finally {
+    for (const run of queue) {
+      if (run.status === "queued") run.status = "cancelled";
+    }
+    recognizing.value = false;
+  }
+}
+
+async function startBatch() {
+  if (!canSubmit.value || !selectedModel.value) return;
+  resetResult();
+  selectedRunId.value = null;
+  const model = selectedModel.value;
+  batchRuns.value = batchLines.value.flatMap((item, index) =>
+    Array.from({ length: repeat.value }, (_, repetition): BatchRun => ({
+      id: index * repeat.value + repetition + 1,
+      line: item.line,
+      repetition: repetition + 1,
+      text: item.text,
+      modelUid: model.model_uid,
+      modelLabel: `${model.display_name} · ${model.model_name}`,
+      status: "queued",
+      result: null,
+      elapsedMs: null,
+      error: "",
+    })),
+  );
+  await executeBatch(batchRuns.value);
+}
+
+async function retryFailed() {
+  await executeBatch(batchRuns.value.filter((run) => run.status === "failed"));
+}
+
+async function recognize() {
+  if (!canSubmit.value) return;
+  if (props.batch) return startBatch();
+  resetResult();
+  const version = recognitionVersion;
+  recognizing.value = true;
+  error.value = "";
   const started = performance.now();
   try {
     const modelUid = selectedModelUid.value;
@@ -226,6 +396,7 @@ async function recognize() {
       context: {},
       model_uid: modelUid,
     });
+    if (disposed || version !== recognitionVersion) return;
     elapsedMs.value = Math.round(performance.now() - started);
     result.value = recognized;
     recognizing.value = false;
@@ -257,7 +428,8 @@ async function loadLatencyAnalysis() {
 }
 
 async function loadModelOutput() {
-  if (!result.value || !resultModelUid.value || modelOutputLoading.value) return;
+  if (!result.value || !resultModelUid.value || modelOutputLoading.value)
+    return;
   const version = recognitionVersion;
   modelOutputLoading.value = true;
   modelOutputError.value = "";
@@ -270,7 +442,9 @@ async function loadModelOutput() {
   } catch (value) {
     if (version === recognitionVersion) {
       modelOutputError.value =
-        value instanceof Error ? value.message : "LLM 原始 JSON 加载失败，请重试";
+        value instanceof Error
+          ? value.message
+          : "LLM 原始 JSON 加载失败，请重试";
     }
   } finally {
     if (version === recognitionVersion) modelOutputLoading.value = false;
@@ -301,6 +475,7 @@ async function copyResultJson() {
 
 async function openPrompt() {
   if (!result.value || !resultModelUid.value) return;
+  const version = recognitionVersion;
   promptDialogVisible.value = true;
   promptCopied.value = false;
   if (promptText.value) return;
@@ -311,9 +486,11 @@ async function openPrompt() {
       result.value.request_id,
       resultModelUid.value,
     );
+    if (version !== recognitionVersion) return;
     promptText.value = prompt.final_prompt;
     promptTruncated.value = prompt.truncated;
   } catch (value) {
+    if (version !== recognitionVersion) return;
     promptError.value =
       value instanceof IntentApiError
         ? value.message
@@ -321,7 +498,7 @@ async function openPrompt() {
           ? value.message
           : "提示词加载失败，请稍后重试";
   } finally {
-    promptLoading.value = false;
+    if (version === recognitionVersion) promptLoading.value = false;
   }
 }
 
@@ -339,19 +516,29 @@ async function copyPrompt() {
 }
 
 onMounted(() => void loadModels());
+onBeforeUnmount(() => {
+  disposed = true;
+  stopRequested.value = true;
+  ++recognitionVersion;
+});
 </script>
 
 <template>
-  <section class="intent-recognition">
+  <section class="intent-recognition" :class="{ 'batch-recognition': batch }">
     <div class="intent-intro">
-      <p>输入一句自然语言，识别其中一个或多个可独立处理的动作、路由和参数。</p>
+      <p v-if="batch">
+        每行输入一条内容，按顺序独立识别；可重复执行并逐条查看完整结果。离开页面会停止后续任务。
+      </p>
+      <p v-else>
+        输入一句自然语言，识别其中一个或多个可独立处理的动作、路由和参数。
+      </p>
     </div>
 
     <div class="intent-layout">
       <section class="intent-panel intent-compose-panel">
         <div class="panel-heading">
           <div>
-            <h2>识别输入</h2>
+            <h2>{{ batch ? "多条调试输入" : "识别输入" }}</h2>
           </div>
         </div>
 
@@ -376,7 +563,10 @@ onMounted(() => void loadModels());
               </div>
             </el-option>
           </el-select>
-          <el-button :loading="loadingModels" @click="loadModels"
+          <el-button
+            :loading="loadingModels"
+            :disabled="recognizing"
+            @click="loadModels"
             >刷新</el-button
           >
         </div>
@@ -391,29 +581,64 @@ onMounted(() => void loadModels());
           </el-button>
         </div>
 
-        <label class="field-label" for="intent-text">需要识别的内容</label>
+        <label class="field-label" for="intent-text">{{
+          batch ? "调试内容（每行一条，空行自动忽略）" : "需要识别的内容"
+        }}</label>
         <el-input
           id="intent-text"
           v-model="text"
           type="textarea"
           :rows="7"
-          maxlength="2000"
-          show-word-limit
+          :maxlength="batch ? undefined : 2000"
+          :show-word-limit="!batch"
           resize="vertical"
           :disabled="recognizing"
-          placeholder="例如：我想制定一个减脂训练计划"
+          :placeholder="
+            batch
+              ? '我想制定一个减脂训练计划\n今天跑了多少公里\n暂停训练'
+              : '例如：我想制定一个减脂训练计划'
+          "
           @keydown.ctrl.enter="recognize"
         />
 
+        <div v-if="batch" class="batch-options">
+          <label class="field-label" id="batch-repeat-label"
+            >每条重复次数</label
+          >
+          <el-radio-group
+            v-model="repeat"
+            :disabled="recognizing"
+            aria-labelledby="batch-repeat-label"
+          >
+            <el-radio-button :value="1">1 次</el-radio-button>
+            <el-radio-button :value="3">3 次</el-radio-button>
+            <el-radio-button :value="5">5 次</el-radio-button>
+          </el-radio-group>
+          <p class="batch-hint">
+            {{ batchLines.length }} 条内容，共
+            {{ batchLines.length * repeat }} 次调用；每条最多 2000 字，每批最多
+            100 次。
+          </p>
+          <el-alert
+            v-if="batchInputError"
+            :title="batchInputError"
+            type="warning"
+            :closable="false"
+            show-icon
+          />
+        </div>
+
         <div class="submit-row">
-          <span>Ctrl + Enter 快速识别</span>
+          <span>Ctrl + Enter {{ batch ? "开始调试" : "快速识别" }}</span>
           <el-button
             type="primary"
             :loading="recognizing"
             :disabled="!canSubmit"
             @click="recognize"
           >
-            {{ recognizing ? "正在识别..." : "开始识别" }}
+            {{
+              recognizing ? "正在识别..." : batch ? "开始多条调试" : "开始识别"
+            }}
           </el-button>
         </div>
 
@@ -427,11 +652,13 @@ onMounted(() => void loadModels());
         >
           <template #default>
             <div class="error-actions">
-              <el-button size="small" @click="recognize">重新识别</el-button>
+              <el-button size="small" :disabled="!canSubmit" @click="recognize"
+                >重新识别</el-button
+              >
               <el-button size="small" @click="emit('navigate', '/models')">
                 检查模型配置
               </el-button>
-              <el-button size="small" @click="emit('navigate', '/config')">
+              <el-button size="small" @click="emit('navigate', '/config/routes')">
                 检查业务配置
               </el-button>
             </div>
@@ -439,10 +666,110 @@ onMounted(() => void loadModels());
         </el-alert>
       </section>
 
+      <section
+        v-if="batch && batchRuns.length"
+        class="intent-panel batch-results-panel"
+        aria-live="polite"
+      >
+        <div class="panel-heading">
+          <div>
+            <h2>调试结果</h2>
+            <p>
+              已执行 {{ batchCompleted }}/{{ batchRuns.length }} · 成功
+              {{ batchSuccess }} · 失败 {{ batchFailed }} · 已停止
+              {{ batchCancelled }}
+            </p>
+          </div>
+        </div>
+        <el-progress
+          :percentage="Math.round((batchCompleted / batchRuns.length) * 100)"
+          :status="
+            !recognizing && batchSuccess === batchRuns.length
+              ? 'success'
+              : undefined
+          "
+        />
+        <div class="batch-actions">
+          <el-button
+            v-if="recognizing"
+            :disabled="stopRequested"
+            @click="stopRequested = true"
+          >
+            {{ stopRequested ? "等待当前请求完成…" : "停止后续任务" }}
+          </el-button>
+          <el-button v-else :disabled="!batchFailed" @click="retryFailed"
+            >重试失败项（{{ batchFailed }}）</el-button
+          >
+          <span class="batch-hint">重试使用各条记录原先选择的模型。</span>
+        </div>
+        <el-table
+          :data="batchRuns"
+          row-key="id"
+          max-height="520"
+          :row-class-name="batchRowClass"
+        >
+          <el-table-column label="条目" width="80">
+            <template #default="{ row }">
+              <div>#{{ row.id }}</div>
+              <small>行 {{ row.line }} / 第 {{ row.repetition }} 次</small>
+            </template>
+          </el-table-column>
+          <el-table-column label="输入 / 识别结果" min-width="180">
+            <template #default="{ row }">
+              <div class="batch-input-text">{{ row.text }}</div>
+              <p v-if="row.error" class="batch-run-error">{{ row.error }}</p>
+              <div
+                v-for="action in row.result?.actions ?? []"
+                :key="action.action_id"
+                class="batch-action-summary"
+              >
+                {{ routeLabels[action.route] ?? action.route }} ·
+                {{ action.intent?.zh ?? "未识别到二级意图" }}
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态 / 用时" width="100">
+            <template #default="{ row }">
+              <el-tag
+                size="small"
+                :type="
+                  row.status === 'success'
+                    ? 'success'
+                    : row.status === 'failed'
+                      ? 'danger'
+                      : 'info'
+                "
+                >{{ runStatusLabel(row) }}</el-tag
+              >
+              <div>{{ formatDuration(row.elapsedMs) }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column label="详情" width="85" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                link
+                type="primary"
+                :disabled="!row.result"
+                @click="selectRun(row)"
+                >{{
+                  row.id === selectedRunId ? "当前结果" : "查看结果"
+                }}</el-button
+              >
+            </template>
+          </el-table-column>
+        </el-table>
+      </section>
+
       <section class="intent-panel intent-result-panel" aria-live="polite">
         <div class="panel-heading">
           <div>
-            <h2>识别结果</h2>
+            <h2>
+              {{
+                batch && selectedRun
+                  ? `第 ${selectedRun.line} 行 · 第 ${selectedRun.repetition} 次识别结果`
+                  : "识别结果"
+              }}
+            </h2>
             <p v-if="result">
               {{ resultModelLabel }}
               <span v-if="elapsedMs !== null"> · {{ elapsedMs }} ms</span>
@@ -456,7 +783,7 @@ onMounted(() => void loadModels());
           </div>
         </div>
 
-        <div v-if="recognizing" class="result-state">
+        <div v-if="recognizing && !batch" class="result-state">
           <span class="intent-spinner" aria-hidden="true"></span>
           <strong>正在识别...</strong>
           <span>模型正在拆分 Action，并分析 Route、Intent 和 Slot</span>
@@ -465,10 +792,21 @@ onMounted(() => void loadModels());
         <div v-else-if="!result" class="result-state empty-result">
           <span class="result-placeholder">R</span>
           <strong>等待识别</strong>
-          <span>完成识别后，结果会显示在这里</span>
+          <span>{{
+            batch
+              ? "首条成功结果将自动展示，也可在结果列表中选择查看"
+              : "完成识别后，结果会显示在这里"
+          }}</span>
         </div>
 
         <div v-else class="result-content">
+          <section
+            v-if="batch && selectedRun"
+            class="result-section batch-selected-input"
+          >
+            <h3>本次输入</h3>
+            <p>{{ selectedRun.text }}</p>
+          </section>
           <section class="result-section action-plan-summary">
             <div>
               <h3>动作计划</h3>
@@ -525,16 +863,24 @@ onMounted(() => void loadModels());
                       v-for="(slot, index) in action.slots"
                       :key="`${action.action_id}-${slot.name}-${index}`"
                     >
-                      <dt>{{ slot.zh }} <small>{{ slot.name }}</small></dt>
+                      <dt>
+                        {{ slot.zh }} <small>{{ slot.name }}</small>
+                      </dt>
                       <dd>{{ slot.value }}</dd>
                     </div>
                   </dl>
                   <p v-else class="empty-value">无参数</p>
                 </div>
 
-                <div v-if="action.depends_on.length" class="action-dependencies">
+                <div
+                  v-if="action.depends_on.length"
+                  class="action-dependencies"
+                >
                   <span>依赖动作</span>
-                  <code v-for="dependency in action.depends_on" :key="dependency">
+                  <code
+                    v-for="dependency in action.depends_on"
+                    :key="dependency"
+                  >
                     {{ dependency }}
                   </code>
                 </div>
@@ -591,9 +937,12 @@ onMounted(() => void loadModels());
               </div>
               <div>
                 <span>近期平均</span>
-                <strong>{{ formatDuration(latencyAnalysis?.baseline.average_ms ?? null) }}</strong>
+                <strong>{{
+                  formatDuration(latencyAnalysis?.baseline.average_ms ?? null)
+                }}</strong>
                 <small>
-                  同模型最近 {{ latencyAnalysis?.baseline.sample_size ?? 0 }} 个成功样本
+                  同模型最近
+                  {{ latencyAnalysis?.baseline.sample_size ?? 0 }} 个成功样本
                 </small>
               </div>
             </div>
@@ -643,7 +992,9 @@ onMounted(() => void loadModels());
             <div class="json-output-heading">
               <div>
                 <h3>LLM 原始 JSON</h3>
-                <p>本次模型生成的原始内容，仅格式化缩进；调用记录中的敏感内容已脱敏。</p>
+                <p>
+                  本次模型生成的原始内容，仅格式化缩进；调用记录中的敏感内容已脱敏。
+                </p>
               </div>
               <el-button
                 size="small"
@@ -705,11 +1056,7 @@ onMounted(() => void loadModels());
       </template>
       <template #footer>
         <el-button @click="promptDialogVisible = false">关闭</el-button>
-        <el-button
-          type="primary"
-          :disabled="!promptText"
-          @click="copyPrompt"
-        >
+        <el-button type="primary" :disabled="!promptText" @click="copyPrompt">
           {{ promptCopied ? "已复制" : "复制提示词" }}
         </el-button>
       </template>

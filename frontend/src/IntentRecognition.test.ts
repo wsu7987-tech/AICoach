@@ -57,18 +57,28 @@ async function render() {
 
 it("submits the selected model and renders product result fields", async () => {
   vi.mocked(analyzeIntent).mockResolvedValue({
+    schema_version: 2,
     request_id: "request-1",
     text: "我想减脂",
-    route: "training_business",
-    intents: [{ name: "fat_loss", zh: "减脂训练", confidence: 0.94 }],
-    slots: [
+    is_compound: false,
+    composition: "single",
+    actions: [
       {
-        name: "goal",
-        zh: "目标",
-        value: "减脂",
-        start: 2,
-        end: 4,
-        confidence: 0.9,
+        action_id: "action-1",
+        order: 1,
+        depends_on: [],
+        route: "training_business",
+        intent: { name: "fat_loss", zh: "减脂训练", confidence: 0.94 },
+        slots: [
+          {
+            name: "goal",
+            zh: "目标",
+            value: "减脂",
+            start: 2,
+            end: 4,
+            confidence: 0.9,
+          },
+        ],
       },
     ],
     risk: null,

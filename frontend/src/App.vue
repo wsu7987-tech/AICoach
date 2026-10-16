@@ -24,7 +24,7 @@ type NavigationItem = { path: AdminRoute; label: string };
 
 const runtimeNavigation: NavigationItem[] = [
   { path: "/intent", label: "意图识别" },
-  { path: "/debug", label: "单条调试" },
+  { path: "/debug", label: "多条调试" },
   { path: "/observability", label: "调用观测" },
   { path: "/status", label: "服务状态" },
 ];
@@ -72,12 +72,16 @@ const navigation = [
 function routeFromLocation(): AdminRoute {
   const rawPath = window.location.pathname.replace(/\/$/, "") || "/intent";
   const path = rawPath === "/config" ? "/config/routes" : rawPath;
-  return navigation.some((item) => item.path === path) ? (path as AdminRoute) : "/intent";
+  return navigation.some((item) => item.path === path)
+    ? (path as AdminRoute)
+    : "/intent";
 }
 
 const route = ref<AdminRoute>(routeFromLocation());
-const current = computed(() => navigation.find((item) => item.path === route.value)!);
-const configSection = computed(() => route.value.split("/").at(-1));
+const current = computed(() =>
+  navigation.find((item) => item.path === route.value)!,
+);
+const configSection = computed(() => route.value.split("/").pop());
 
 function navigate(path: AdminRoute) {
   if (path === route.value) return;
@@ -176,7 +180,12 @@ onBeforeUnmount(() => window.removeEventListener("popstate", syncRoute));
       </header>
 
       <section class="content-body">
-        <IntentRecognition v-if="route === '/intent'" @navigate="navigate" />
+        <IntentRecognition
+          v-if="route === '/intent' || route === '/debug'"
+          :key="route"
+          :batch="route === '/debug'"
+          @navigate="navigate"
+        />
         <ModelManagement v-else-if="route === '/models'" />
         <ConfigCenter
           v-else-if="route.startsWith('/config/')"
@@ -185,13 +194,7 @@ onBeforeUnmount(() => window.removeEventListener("popstate", syncRoute));
         />
         <DebugConsole
           v-else
-          :section="
-            route === '/observability'
-              ? 'observability'
-              : route === '/status'
-                ? 'status'
-                : 'debug'
-          "
+          :section="route === '/observability' ? 'observability' : 'status'"
         />
       </section>
     </main>

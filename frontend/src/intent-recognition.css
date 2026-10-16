@@ -2,6 +2,64 @@
   width: 100%;
 }
 
+.batch-recognition .intent-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+}
+
+.batch-recognition .intent-compose-panel,
+.batch-results-panel {
+  grid-column: 1;
+}
+
+.batch-recognition .intent-result-panel {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.batch-hint,
+.batch-action-summary,
+.batch-results-panel small {
+  color: #718099;
+  font-size: 11px;
+}
+
+.batch-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.batch-run-error {
+  color: #c43f45;
+  margin: 4px 0;
+}
+
+.batch-input-text,
+.batch-selected-input p,
+.batch-run-error {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.batch-results-panel .selected-batch-row {
+  --el-table-tr-bg-color: #eef3ff;
+}
+
+@media (max-width: 1100px) {
+  .batch-recognition .intent-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .batch-recognition .intent-result-panel {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
+
 .intent-intro {
   margin-bottom: 12px;
 }
@@ -531,7 +589,8 @@
   border-radius: 6px;
   background: #172033;
   color: #dbe8ff;
-  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 10px;
   line-height: 1.55;
   tab-size: 2;
@@ -577,7 +636,8 @@
   border-radius: 7px;
   background: #172033;
   color: #dbe8ff;
-  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   line-height: 1.7;
   tab-size: 2;

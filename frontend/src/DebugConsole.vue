@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
-import { ConfigApiError, request } from "./configApi";
+import { ref } from "vue";
+import { request } from "./configApi";
 
 withDefaults(
   defineProps<{
-    section?: "debug" | "observability" | "status";
+    section?: "observability" | "status";
   }>(),
-  { section: "debug" },
+  { section: "observability" },
 );
 
 type Trace = {
@@ -14,13 +14,6 @@ type Trace = {
   parent_trace_id?: string | null;
   attempts?: unknown[];
 };
-const text = ref("");
-const repeat = ref<1 | 3 | 5>(1);
-const busy = ref(false);
-const error = ref("");
-const runs = ref<
-  { ok: boolean; runtime_result?: unknown; trace?: Trace; message?: string }[]
->([]);
 const traces = ref<
   { trace_id: string; input: string; route: string; status: string }[]
 >([]);
@@ -29,27 +22,6 @@ const left = ref("");
 const right = ref("");
 const diff = ref<unknown>(null);
 const status = ref<Record<string, unknown> | null>(null);
-const success = computed(() => runs.value.filter((item) => item.ok).length);
-async function run() {
-  busy.value = true;
-  error.value = "";
-  try {
-    const result = await request<{ runs: typeof runs.value }>(
-      "/debug/analyze",
-      "POST",
-      { text: text.value, repeat: repeat.value },
-    );
-    runs.value = result.runs;
-    await loadTraces();
-  } catch (cause) {
-    error.value =
-      cause instanceof ConfigApiError
-        ? `${cause.code}: ${cause.message}`
-        : "请求失败";
-  } finally {
-    busy.value = false;
-  }
-}
 async function loadTraces() {
   traces.value = (
     await request<{ items: typeof traces.value }>("/traces?limit=30")
@@ -77,41 +49,7 @@ async function loadStatus() {
 </script>
 <template>
   <div class="debug-grid">
-    <el-card
-      v-if="section === 'debug'"
-      ><template #header>单条调试</template
-      ><el-input
-        v-model="text"
-        type="textarea"
-        :rows="3"
-        placeholder="输入一句话"
-      /><el-space wrap style="margin-top: 12px"
-        ><el-radio-group v-model="repeat"
-          ><el-radio-button :value="1">1 次</el-radio-button
-          ><el-radio-button :value="3">3 次</el-radio-button
-          ><el-radio-button :value="5">5 次</el-radio-button></el-radio-group
-        ><el-button type="primary" :loading="busy" @click="run"
-          >识别</el-button
-        ></el-space
-      ><el-alert
-        v-if="error"
-        :title="error"
-        type="error"
-        show-icon
-        style="margin-top: 12px"
-      />
-      <p v-if="runs.length">成功 {{ success }}/{{ runs.length }}</p>
-      <el-collapse v-if="runs.length"
-        ><el-collapse-item
-          v-for="(run, index) in runs"
-          :key="index"
-          :title="`第 ${index + 1} 次 · ${run.trace?.trace_id ?? run.message}`"
-        >
-          <pre>{{ JSON.stringify(run, null, 2) }}</pre>
-        </el-collapse-item></el-collapse
-      ></el-card
-    ><el-card
-      v-if="section === 'status'"
+    <el-card v-if="section === 'status'"
       ><template #header>服务状态</template
       ><el-button @click="loadStatus">刷新</el-button>
       <pre v-if="status">{{ JSON.stringify(status, null, 2) }}</pre></el-card
