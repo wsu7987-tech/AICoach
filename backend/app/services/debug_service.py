@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC
 from typing import Any
 
 from sqlalchemy import Text, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import AppError, ErrorCode
-from app.db.models import EvaluationRun, IntentRequestTrace, LLMCallTrace, RuntimeState
+from app.db.models import IntentRequestTrace, LLMCallTrace, RuntimeState
 from app.prompting.builder import PromptBuilder
 from app.providers.factory import ModelProviderFactory
 from app.services import config_service
-from app.services.intent_service import BusinessRuntimeConfiguration, IntentService, ManagedModelLoader
+from app.services.intent_service import (
+    BusinessRuntimeConfiguration,
+    IntentService,
+    ManagedModelLoader,
+)
 from app.services.trace_store import DatabaseTraceStore
 
 
@@ -198,6 +202,7 @@ async def list_traces(sessions: async_sessionmaker, filters: dict[str, Any]) -> 
         "trace_id": IntentRequestTrace.trace_id,
         "route": IntentRequestTrace.final_route,
         "status": IntentRequestTrace.status,
+        "source": IntentRequestTrace.source,
         "release_id": IntentRequestTrace.release_id,
         "model_uid": IntentRequestTrace.managed_model_uid,
     }
@@ -219,9 +224,15 @@ async def list_traces(sessions: async_sessionmaker, filters: dict[str, Any]) -> 
                 )
             )
         if filters.get("start"):
-            query = query.where(IntentRequestTrace.created_at >= filters["start"])
+            start = filters["start"]
+            if start.tzinfo is not None:
+                start = start.astimezone(UTC).replace(tzinfo=None)
+            query = query.where(IntentRequestTrace.created_at >= start)
         if filters.get("end"):
-            query = query.where(IntentRequestTrace.created_at <= filters["end"])
+            end = filters["end"]
+            if end.tzinfo is not None:
+                end = end.astimezone(UTC).replace(tzinfo=None)
+            query = query.where(IntentRequestTrace.created_at < end)
         total = await session.scalar(select(func.count()).select_from(query.subquery())) or 0
         rows = list(
             (
@@ -455,48 +466,4 @@ def diff(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
         "provider_divergence": changes["raw_response"]["changed"]
         and not changes["prompt"]["changed"]
         and not changes["model"]["changed"],
-    }
-
-
-async def status(sessions: async_sessionmaker) -> dict[str, Any]:
-    since = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=24)
-    async with sessions() as session:
-        statement = select(
-            func.count(IntentRequestTrace.id),
-            func.coalesce(func.sum(IntentRequestTrace.status != "success"), 0),
-            func.avg(IntentRequestTrace.latency_ms),
-        ).where(IntentRequestTrace.created_at >= since)
-        count, errors, average = (await session.execute(statement)).one()
-        values = list(
-            (
-                await session.scalars(
-                    select(IntentRequestTrace.latency_ms)
-                    .where(
-                        IntentRequestTrace.created_at >= since,
-                        IntentRequestTrace.latency_ms.is_not(None),
-                    )
-                    .order_by(IntentRequestTrace.latency_ms)
-                )
-            ).all()
-        )
-        queued = (
-            await session.scalar(
-                select(func.count(EvaluationRun.id)).where(EvaluationRun.status == "queued")
-            )
-            or 0
-        )
-        running = (
-            await session.scalar(
-                select(func.count(EvaluationRun.id)).where(EvaluationRun.status == "running")
-            )
-            or 0
-        )
-    p95 = values[max(0, int((len(values) - 1) * 0.95))] if values else None
-    return {
-        "requests_24h": count,
-        "errors_24h": errors,
-        "avg_latency_ms": float(average) if average is not None else None,
-        "p95_latency_ms": p95,
-        "evaluation_queued": queued,
-        "evaluation_running": running,
     }

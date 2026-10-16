@@ -104,18 +104,44 @@ class ReleaseHistory(AdminOutput):
     items: list[ReleaseSummary]
 
 
+class StatusCheck(AdminOutput):
+    state: Literal["ready", "not_ready", "unavailable"]
+    code: str
+    message: str
+
+
+class StatusRelease(AdminOutput):
+    version: str
+    note: str
+    created_at: datetime
+
+
+class StatusModel(AdminOutput):
+    model_uid: str
+    display_name: str
+    model_name: str
+    enabled: bool
+
+
 class ConfigStatus(AdminOutput):
-    runtime_config_ready: bool
-    active_release_id: int | None
-    service_ready: bool = False
-    active_release: dict[str, Any] | None = None
-    default_model: dict[str, Any] | None = None
-    requests_24h: int = 0
-    errors_24h: int = 0
+    checked_at: datetime
+    window_start: datetime
+    source: Literal["runtime", "debug", "replay", "evaluation"]
+    runtime_config_ready: bool | None = None
+    active_release_id: int | None = None
+    service_ready: bool | None = None
+    checks: dict[str, StatusCheck]
+    active_release: StatusRelease | None = None
+    default_model: StatusModel | None = None
+    requests_24h: int | None = None
+    errors_24h: int | None = None
+    cancelled_24h: int | None = None
+    error_rate: float | None = None
+    latency_samples: int | None = None
     avg_latency_ms: float | None = None
     p95_latency_ms: float | None = None
-    evaluation_queued: int = 0
-    evaluation_running: int = 0
+    evaluation_queued: int | None = None
+    evaluation_running: int | None = None
 
 
 def business_snapshot(

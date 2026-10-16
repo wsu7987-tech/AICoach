@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,6 +62,7 @@ async def traces(
     model_uid: str | None = Query(default=None, pattern=r"^mdl_[a-f0-9]{64}$"),
     release_id: int | None = Query(default=None, gt=0),
     status: str | None = None,
+    source: Literal["runtime", "debug", "replay", "evaluation"] | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
     offset: int = Query(0, ge=0),

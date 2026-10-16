@@ -88,19 +88,16 @@ export interface PublishSummary {
   changes: { section: string; before: unknown; after: unknown }[];
 }
 export type PromptModule =
-  | "routes"
-  | "intents"
-  | "intent"
-  | "slots"
-  | "slot"
-  | "enum";
+  "routes" | "intents" | "intent" | "slots" | "slot" | "enum";
 export async function request<T>(
   path: string,
   method = "GET",
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch(`/api/admin${path}`, {
     method,
+    signal,
     headers: { "Content-Type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
@@ -130,10 +127,7 @@ export const configApi = {
       "POST",
       { text },
     ),
-  previewModule: (
-    module: PromptModule,
-    targetName?: string,
-  ) =>
+  previewModule: (module: PromptModule, targetName?: string) =>
     request<{ module: PromptModule; content: string }>(
       "/config/prompt-preview/module",
       "POST",

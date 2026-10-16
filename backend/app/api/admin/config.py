@@ -1,7 +1,7 @@
 """Thin Admin API; all mutations commit before a response is sent."""
 
 from collections.abc import AsyncIterator
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select
@@ -10,8 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import (
     ConfigDraft,
     ConfigRelease,
-    ManagedModel,
-    RuntimeModelState,
     RuntimeState,
 )
 from app.schemas.config import (
@@ -31,7 +29,7 @@ from app.schemas.config import (
 )
 from app.schemas.intent import PromptBuildResult
 from app.services import config_service as service
-from app.services import debug_service
+from app.services import status_service
 
 router = APIRouter()
 
@@ -129,71 +127,14 @@ async def restore_draft(release_id: int, body: RestoreInput, session: Session):
 
 
 @router.get("/status/summary", response_model=ConfigStatus)
-async def status_summary(request: Request, session: Session):
-    state = await session.get(RuntimeState, 1)
-    active_id = state.active_release_id if state else None
-    ready = False
-    if active_id:
-        try:
-            await service.release_configuration(session, active_id)
-            model_state = await session.get(RuntimeModelState, 1)
-            managed_model = (
-                await session.get(ManagedModel, model_state.default_model_id)
-                if model_state is not None and model_state.default_model_id is not None
-                else None
-            )
-            ready = bool(
-                managed_model
-                and managed_model.enabled
-                and managed_model.credential_id
-            )
-        except service.ConfigError:
-            pass
-    active = None
-    default_model = None
-    if active_id:
-        try:
-            configuration = await service.release_configuration(session, active_id)
-            active = {
-                key: configuration[key]
-                for key in ("version", "note", "created_at")
-            }
-            model_state = await session.get(RuntimeModelState, 1)
-            managed_model = (
-                await session.get(ManagedModel, model_state.default_model_id)
-                if model_state is not None and model_state.default_model_id is not None
-                else None
-            )
-            if managed_model is not None:
-                default_model = {
-                    "model_uid": managed_model.model_uid,
-                    "display_name": managed_model.display_name,
-                    "model_name": managed_model.model_name,
-                    "enabled": managed_model.enabled,
-                }
-        except service.ConfigError:
-            pass
-    # /ready is the authoritative service-plane definition, intentionally
-    # independent from the Runtime configuration state.
-    report = await request.app.state.readiness_checker.check()
-    database = request.app.state.database
-    metrics = (
-        await debug_service.status(database.session_factory)
-        if database is not None
-        else {
-            "requests_24h": 0,
-            "errors_24h": 0,
-            "avg_latency_ms": None,
-            "p95_latency_ms": None,
-            "evaluation_queued": 0,
-            "evaluation_running": 0,
-        }
+async def status_summary(
+    request: Request,
+    source: Literal["runtime", "debug", "replay", "evaluation"] = "runtime",
+):
+    # Status must remain readable even when the database dependency is unavailable.
+    return await status_service.summary(
+        request.app.state.database,
+        request.app.state.readiness_checker,
+        request.app.state.managed_model_loader,
+        source=source,
     )
-    return {
-        "runtime_config_ready": ready,
-        "active_release_id": active_id,
-        "service_ready": bool(report and report.ready),
-        "active_release": active,
-        "default_model": default_model,
-        **metrics,
-    }

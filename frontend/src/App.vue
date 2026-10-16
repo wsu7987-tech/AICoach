@@ -5,6 +5,7 @@ import ConfigCenter from "./ConfigCenter.vue";
 import DebugConsole from "./DebugConsole.vue";
 import IntentRecognition from "./IntentRecognition.vue";
 import ModelManagement from "./ModelManagement.vue";
+import ServiceStatus from "./ServiceStatus.vue";
 
 type AdminRoute =
   | "/intent"
@@ -78,15 +79,17 @@ function routeFromLocation(): AdminRoute {
 }
 
 const route = ref<AdminRoute>(routeFromLocation());
+const navigationRevision = ref(0);
 const current = computed(() =>
   navigation.find((item) => item.path === route.value)!,
 );
 const configSection = computed(() => route.value.split("/").pop());
 
-function navigate(path: AdminRoute) {
-  if (path === route.value) return;
-  window.history.pushState({}, "", path);
+function navigate(path: AdminRoute, search = "") {
+  if (path === route.value && window.location.search === search) return;
+  window.history.pushState({}, "", path + search);
   route.value = path;
+  navigationRevision.value += 1;
 }
 
 function handleMenuSelect(index: string) {
@@ -96,6 +99,7 @@ function handleMenuSelect(index: string) {
 
 function syncRoute() {
   route.value = routeFromLocation();
+  navigationRevision.value += 1;
 }
 
 onMounted(() => {
@@ -192,10 +196,8 @@ onBeforeUnmount(() => window.removeEventListener("popstate", syncRoute));
           :section="configSection"
           @navigate="navigate"
         />
-        <DebugConsole
-          v-else
-          :section="route === '/observability' ? 'observability' : 'status'"
-        />
+        <ServiceStatus v-else-if="route === '/status'" @navigate="navigate" />
+        <DebugConsole v-else :key="navigationRevision" />
       </section>
     </main>
   </div>

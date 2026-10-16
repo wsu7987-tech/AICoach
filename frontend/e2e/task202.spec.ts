@@ -103,6 +103,15 @@ test("TASK-202 real debug to trace, replay and provider divergence flow", async 
 
   await page.getByRole("menuitem", { name: "服务状态" }).click();
   await page.getByRole("button", { name: "刷新", exact: true }).click();
-  await expect(page.getByText(`"id": ${published.id}`).last()).toBeVisible();
-  await expect(page.getByText('"requests_24h"')).toBeVisible();
+  await expect(page.getByRole("heading", { name: "就绪检查" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "最近 24 小时调用" }),
+  ).toBeVisible();
+  await page.getByText("查看状态详情", { exact: true }).click();
+  await expect(page.locator(".status-json")).toContainText(
+    `"active_release_id": ${published.id}`,
+  );
+  await expect(page.locator(".status-json")).toContainText(
+    '"source": "runtime"',
+  );
 });
