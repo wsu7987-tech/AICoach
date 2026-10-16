@@ -41,6 +41,7 @@ class ManagedModelCreate(BaseModel):
     model_name: str = Field(min_length=1, max_length=256, pattern=r"^[A-Za-z0-9._:/-]+$")
     temperature: float | None = Field(default=0.1, ge=0, le=2)
     top_p: float | None = Field(default=0.8, gt=0, le=1)
+    enable_thinking: bool = False
     timeout_seconds: float = Field(default=30, gt=0, le=600)
     max_retries: int = Field(default=1, ge=0, le=5)
     max_concurrency: int = Field(default=4, gt=0, le=256)
@@ -63,6 +64,7 @@ class ManagedModelUpdate(BaseModel):
     api_key: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
     temperature: float | None = Field(default=None, ge=0, le=2)
     top_p: float | None = Field(default=None, gt=0, le=1)
+    enable_thinking: bool | None = None
     clear_temperature: bool = False
     clear_top_p: bool = False
     timeout_seconds: float | None = Field(default=None, gt=0, le=600)
@@ -99,6 +101,7 @@ class ConnectionVerifyInput(BaseModel):
     )
     temperature: float | None = Field(default=0.1, ge=0, le=2)
     top_p: float | None = Field(default=0.8, gt=0, le=1)
+    enable_thinking: bool = False
     timeout_seconds: float = Field(default=15, gt=0, le=60)
 
     @field_validator("base_url")
@@ -174,6 +177,7 @@ class ManagedModelView(BaseModel):
     base_url: str
     temperature: float | None
     top_p: float | None
+    enable_thinking: bool
     timeout_seconds: float
     max_retries: int
     max_concurrency: int

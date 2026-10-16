@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ManagedModel, ProviderCredential, RuntimeModelState
+from app.providers.openai_compatible import thinking_request_options
 from app.schemas.intent import LLMRecognitionOutputV2
 from app.schemas.managed_model import (
     ConnectionVerifyResult,
@@ -42,8 +43,12 @@ def make_model_uid(base_url: str, model_name: str) -> str:
     return f"mdl_{digest}"
 
 
-def _params(temperature: float | None, top_p: float | None) -> dict[str, float]:
-    result: dict[str, float] = {}
+def _params(
+    temperature: float | None,
+    top_p: float | None,
+    enable_thinking: bool,
+) -> dict[str, float | bool]:
+    result: dict[str, float | bool] = {"enable_thinking": enable_thinking}
     if temperature is not None:
         result["temperature"] = temperature
     if top_p is not None:
@@ -64,6 +69,7 @@ def _view(
         base_url=row.base_url,
         temperature=row.params_json.get("temperature"),
         top_p=row.params_json.get("top_p"),
+        enable_thinking=row.params_json.get("enable_thinking") is True,
         timeout_seconds=row.timeout_seconds,
         max_retries=row.max_retries,
         max_concurrency=row.max_concurrency,
@@ -153,7 +159,7 @@ async def create_model(
         model_name=body.model_name,
         base_url=body.base_url,
         credential_id=credential.id,
-        params_json=_params(body.temperature, body.top_p),
+        params_json=_params(body.temperature, body.top_p, body.enable_thinking),
         timeout_seconds=body.timeout_seconds,
         max_retries=body.max_retries,
         max_concurrency=body.max_concurrency,
@@ -197,6 +203,8 @@ async def update_model(
         params.pop("top_p", None)
     elif body.top_p is not None:
         params["top_p"] = body.top_p
+    if body.enable_thinking is not None:
+        params["enable_thinking"] = body.enable_thinking
     row.params_json = params
     if body.timeout_seconds is not None:
         row.timeout_seconds = body.timeout_seconds
@@ -261,6 +269,7 @@ async def verify_connection(
     model_name: str | None = None,
     temperature: float | None = 0.1,
     top_p: float | None = 0.8,
+    enable_thinking: bool = False,
 ) -> ConnectionVerifyResult:
     http_client = httpx.AsyncClient(trust_env=False)
     client = AsyncOpenAI(
@@ -335,6 +344,7 @@ async def verify_connection(
                 {"role": "user", "content": json.dumps(expected, ensure_ascii=False)},
             ],
             response_format={"type": "json_object"},
+            **thinking_request_options(model_name, enable_thinking),
             **params,
         )
         content = completion.choices[0].message.content or ""
@@ -405,6 +415,7 @@ async def verify_existing(
         model_name=row.model_name,
         temperature=row.params_json.get("temperature"),
         top_p=row.params_json.get("top_p"),
+        enable_thinking=row.params_json.get("enable_thinking") is True,
     )
     if result.model_verified and credential is not None and replacement_api_key is None:
         credential.last_verified_at = _utc_now()
@@ -482,13 +493,17 @@ async def test_model_service(
     )
     provider_started = time.perf_counter()
     try:
+        params = dict(row.params_json)
+        enable_thinking = params.pop("enable_thinking", False) is True
+        params.pop("extra_body", None)
         completion = await client.chat.completions.create(
             model=row.model_name,
             messages=[
                 {"role": "system", "content": body.system_prompt},
                 {"role": "user", "content": body.question},
             ],
-            **dict(row.params_json),
+            **thinking_request_options(row.model_name, enable_thinking),
+            **params,
         )
         provider_latency_ms = round(
             (time.perf_counter() - provider_started) * 1000, 3

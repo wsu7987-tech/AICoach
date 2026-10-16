@@ -41,6 +41,7 @@ async def verify_new_connection(body: ConnectionVerifyInput):
         model_name=body.model_name,
         temperature=body.temperature,
         top_p=body.top_p,
+        enable_thinking=body.enable_thinking,
     )
 
 

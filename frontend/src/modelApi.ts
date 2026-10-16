@@ -15,6 +15,7 @@ export interface ManagedModel {
   base_url: string;
   temperature: number | null;
   top_p: number | null;
+  enable_thinking: boolean;
   timeout_seconds: number;
   max_retries: number;
   max_concurrency: number;
@@ -39,6 +40,7 @@ export interface ModelCreateInput {
   model_name: string;
   temperature: number;
   top_p: number;
+  enable_thinking: boolean;
   timeout_seconds: number;
   max_retries: number;
   max_concurrency: number;
@@ -49,6 +51,7 @@ export interface ModelUpdateInput {
   api_key?: string;
   temperature?: number;
   top_p?: number;
+  enable_thinking?: boolean;
   timeout_seconds?: number;
   max_retries?: number;
   max_concurrency?: number;
@@ -117,6 +120,7 @@ export const modelApi = {
     modelName?: string,
     temperature?: number,
     topP?: number,
+    enableThinking?: boolean,
   ) =>
     request<VerifyResult>("/models/verify", "POST", {
       base_url: baseUrl,
@@ -125,6 +129,9 @@ export const modelApi = {
       ...(modelName ? { model_name: modelName } : {}),
       ...(temperature === undefined ? {} : { temperature }),
       ...(topP === undefined ? {} : { top_p: topP }),
+      ...(enableThinking === undefined
+        ? {}
+        : { enable_thinking: enableThinking }),
     }),
   verifyExisting: (modelUid: string, apiKey?: string) =>
     request<VerifyResult>(`/models/${modelUid}/verify`, "POST", {

@@ -29,6 +29,21 @@ from app.schemas.intent import (
 from app.schemas.managed_model import ManagedModelRuntimeSnapshot
 
 
+def supports_thinking_control(model: str) -> bool:
+    """Return whether the configured Model Studio model supports the switch."""
+
+    normalized = model.rsplit("/", 1)[-1].casefold()
+    return normalized.startswith(("qwen", "deepseek-v4"))
+
+
+def thinking_request_options(model: str, enabled: bool) -> dict[str, Any]:
+    """Translate the managed thinking setting into OpenAI SDK vendor extras."""
+
+    if not supports_thinking_control(model):
+        return {}
+    return {"extra_body": {"enable_thinking": enabled}}
+
+
 class ProviderError(AppError):
     """Typed provider failure with every physical request made before failure."""
 
@@ -174,12 +189,23 @@ class OpenAICompatibleProvider:
         params = {
             key: value
             for key, value in self.runtime_snapshot.params_json.items()
-            if key not in {"max_tokens", "response_format", "model", "messages"}
+            if key
+            not in {
+                "enable_thinking",
+                "max_tokens",
+                "response_format",
+                "model",
+                "messages",
+            }
         }
+        enable_thinking = self.runtime_snapshot.params_json.get("enable_thinking", False)
+        if not isinstance(enable_thinking, bool):
+            enable_thinking = False
         request: dict[str, Any] = {
             "model": self.runtime_snapshot.model,
             "messages": [message.model_dump(mode="json") for message in prompt.messages],
             **params,
+            **thinking_request_options(self.runtime_snapshot.model, enable_thinking),
             "response_format": self._response_format(prompt),
         }
         request.pop("max_tokens", None)

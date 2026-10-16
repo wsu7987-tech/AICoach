@@ -14,6 +14,7 @@ const model = (): ManagedModel => ({
   base_url: "https://example.com/v1",
   temperature: 0.1,
   top_p: 0.8,
+  enable_thinking: false,
   timeout_seconds: 30,
   max_retries: 1,
   max_concurrency: 4,

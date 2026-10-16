@@ -1,5 +1,6 @@
 from cryptography.fernet import Fernet
 
+from app.providers.openai_compatible import thinking_request_options
 from app.schemas.managed_model import ManagedModelCreate, normalized_base_url
 from app.security.credentials import CredentialCipher, CredentialDecryptionError
 from app.services.managed_model_service import make_model_uid
@@ -55,4 +56,18 @@ def test_openai_compatible_model_creation_does_not_require_a_provider_vendor() -
 
     assert model.base_url == "https://api.deepseek.com"
     assert model.model_name == "deepseek-chat"
+    assert model.enable_thinking is False
     assert "provider" not in model.model_dump()
+
+
+def test_thinking_setting_is_translated_only_for_qwen_models() -> None:
+    assert thinking_request_options("qwen3.7-plus", False) == {
+        "extra_body": {"enable_thinking": False}
+    }
+    assert thinking_request_options("Qwen/Qwen3-32B", True) == {
+        "extra_body": {"enable_thinking": True}
+    }
+    assert thinking_request_options("deepseek-v4-flash-0731", False) == {
+        "extra_body": {"enable_thinking": False}
+    }
+    assert thinking_request_options("deepseek-chat", False) == {}

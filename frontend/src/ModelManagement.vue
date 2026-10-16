@@ -47,6 +47,7 @@ const form = reactive<ModelCreateInput>({
   model_name: "",
   temperature: 0.1,
   top_p: 0.8,
+  enable_thinking: false,
   timeout_seconds: 30,
   max_retries: 1,
   max_concurrency: 4,
@@ -58,6 +59,15 @@ const dialogTitle = computed(() => {
   return "添加模型";
 });
 const identityLocked = computed(() => mode.value === "edit");
+const supportsThinkingControl = computed(() => {
+  const modelName = form.model_name.trim().split("/").pop()?.toLowerCase() ?? "";
+  return modelName.startsWith("qwen") || modelName.startsWith("deepseek-v4");
+});
+
+function modelSupportsThinkingControl(modelName: string): boolean {
+  const normalized = modelName.trim().split("/").pop()?.toLowerCase() ?? "";
+  return normalized.startsWith("qwen") || normalized.startsWith("deepseek-v4");
+}
 const needsNewCredential = computed(
   () => mode.value !== "edit" || replaceCredential.value,
 );
@@ -131,6 +141,7 @@ function assignDefaults() {
     model_name: "",
     temperature: 0.1,
     top_p: 0.8,
+    enable_thinking: false,
     timeout_seconds: 30,
     max_retries: 1,
     max_concurrency: 4,
@@ -155,6 +166,7 @@ function assignModel(model: ManagedModel) {
     model_name: model.model_name,
     temperature: model.temperature ?? 0.1,
     top_p: model.top_p ?? 0.8,
+    enable_thinking: model.enable_thinking,
     timeout_seconds: model.timeout_seconds,
     max_retries: model.max_retries,
     max_concurrency: model.max_concurrency,
@@ -207,6 +219,7 @@ async function verify() {
             form.model_name || undefined,
             form.temperature,
             form.top_p,
+            form.enable_thinking,
           );
     availableModels.value = result.models;
     verified.value = result.model_verified;
@@ -237,6 +250,7 @@ async function save() {
         display_name: form.display_name,
         temperature: form.temperature,
         top_p: form.top_p,
+        enable_thinking: form.enable_thinking,
         timeout_seconds: form.timeout_seconds,
         max_retries: form.max_retries,
         max_concurrency: form.max_concurrency,
@@ -416,6 +430,10 @@ onMounted(() => void loadModels());
             <dt>连接凭据</dt>
             <dd>{{ model.credential_hint ?? "已通过运行环境配置" }}</dd>
           </div>
+          <div v-if="modelSupportsThinkingControl(model.model_name)">
+            <dt>深度思考</dt>
+            <dd>{{ model.enable_thinking ? "开启" : "关闭" }}</dd>
+          </div>
         </dl>
 
         <div class="model-actions">
@@ -576,6 +594,20 @@ onMounted(() => void loadModels());
               :step="0.05"
               @change="invalidateModelVerification"
             />
+          </el-form-item>
+          <el-form-item v-if="supportsThinkingControl" label="深度思考">
+            <div>
+              <el-switch
+                v-model="form.enable_thinking"
+                active-text="开启"
+                inactive-text="关闭"
+                @change="invalidateModelVerification"
+              />
+              <span class="field-help">
+                意图识别建议关闭；Qwen 和百炼 DeepSeek V4 模型通过
+                enable_thinking 参数控制。
+              </span>
+            </div>
           </el-form-item>
         </div>
 
