@@ -51,7 +51,7 @@ class DatabaseBusinessConfigLoader:
             try:
                 async with self._sessions() as session:
                     data = await config_service.release_configuration(session, active_id)
-                configuration = BusinessRuntimeConfiguration.from_verified_release(data)
+                configuration = BusinessRuntimeConfiguration.from_release(data)
             except Exception:
                 raise configuration_error() from None
             self._cached = configuration

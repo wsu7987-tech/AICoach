@@ -55,6 +55,7 @@ class SlotValue(ContractModel):
     name: str = Field(min_length=1)
     zh: str = Field(min_length=1)
     value: str = Field(min_length=1)
+    raw_value: str | None = Field(default=None, exclude=True)
     start: int = Field(ge=0)
     end: int = Field(ge=0)
     confidence: float = Field(ge=0, le=1)
@@ -80,22 +81,13 @@ class EvidenceItem(ContractModel):
 
 
 def _validate_clarification(
-    route: RouteKey,
     need_clarification: bool,
     clarification: str | None,
-    *,
-    allow_training_normalization: bool = False,
 ) -> None:
     if not need_clarification and clarification is not None:
         raise ValueError("clarification must be null when need_clarification is false")
     if need_clarification and (clarification is None or not clarification.strip()):
         raise ValueError("clarification must be a non-empty string when need_clarification is true")
-    if (
-        route == "training_business"
-        and (need_clarification or clarification is not None)
-        and not allow_training_normalization
-    ):
-        raise ValueError("training_business cannot require clarification")
 
 
 def _validate_intent_order(intents: list[IntentCandidate]) -> None:
@@ -121,7 +113,7 @@ class IntentResult(ContractModel):
     @model_validator(mode="after")
     def valid_runtime_invariants(self) -> IntentResult:
         _validate_intent_order(self.intents)
-        _validate_clarification(self.route, self.need_clarification, self.clarification)
+        _validate_clarification(self.need_clarification, self.clarification)
         return self
 
 
@@ -140,12 +132,7 @@ class LLMStructuredIntentOutput(ContractModel):
     @model_validator(mode="after")
     def valid_llm_invariants(self) -> LLMStructuredIntentOutput:
         _validate_intent_order(self.intents)
-        _validate_clarification(
-            self.route,
-            self.need_clarification,
-            self.clarification,
-            allow_training_normalization=True,
-        )
+        _validate_clarification(self.need_clarification, self.clarification)
         return self
 
 
@@ -155,6 +142,18 @@ class LLMExtractedTextSlot(ContractModel):
     name: str = Field(min_length=1)
     value: str = Field(min_length=1)
     confidence: float = Field(ge=0, le=1)
+
+
+class SlotCandidate(ContractModel):
+    """One deterministic candidate produced by a reusable base Slot."""
+
+    slot_name: str = Field(min_length=1)
+    slot_zh: str = Field(min_length=1)
+    value: str = Field(min_length=1)
+    source: str = Field(min_length=1)
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+    confidence: float = Field(default=1, ge=0, le=1)
 
 
 class LLMRecognitionOutput(ContractModel):
@@ -172,12 +171,7 @@ class LLMRecognitionOutput(ContractModel):
     @model_validator(mode="after")
     def valid_llm_invariants(self) -> LLMRecognitionOutput:
         _validate_intent_order(self.intents)
-        _validate_clarification(
-            self.route,
-            self.need_clarification,
-            self.clarification,
-            allow_training_normalization=True,
-        )
+        _validate_clarification(self.need_clarification, self.clarification)
         return self
 
 
@@ -216,9 +210,7 @@ class IntentResultV2(ContractModel):
             composition=self.composition,
             need_clarification=self.need_clarification,
         )
-        _validate_clarification(
-            "compound", self.need_clarification, self.clarification
-        )
+        _validate_clarification(self.need_clarification, self.clarification)
         return self
 
 
@@ -254,9 +246,7 @@ class LLMStructuredIntentOutputV2(ContractModel):
             composition=self.composition,
             need_clarification=self.need_clarification,
         )
-        _validate_clarification(
-            "compound", self.need_clarification, self.clarification
-        )
+        _validate_clarification(self.need_clarification, self.clarification)
         return self
 
 
@@ -293,9 +283,7 @@ class LLMRecognitionOutputV2(ContractModel):
             composition=self.composition,
             need_clarification=self.need_clarification,
         )
-        _validate_clarification(
-            "compound", self.need_clarification, self.clarification
-        )
+        _validate_clarification(self.need_clarification, self.clarification)
         return self
 
 
@@ -355,7 +343,11 @@ class RouteDefinition(ContractModel):
 
 class IntentRequiredSlot(ContractModel):
     slot_name: str = Field(min_length=1)
+    field_name: str | None = Field(default=None, min_length=1)
+    field_zh: str | None = Field(default=None, min_length=1)
+    required: bool = False
     default_value: str | None = None
+    note: str | None = None
 
     @field_validator("slot_name")
     @classmethod
@@ -372,6 +364,20 @@ class IntentRequiredSlot(ContractModel):
             return None
         normalized = value.strip()
         return normalized or None
+
+    @field_validator("field_name", "field_zh", "note")
+    @classmethod
+    def normalize_optional_field(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    def effective_name(self) -> str:
+        return self.field_name or self.slot_name
+
+    def effective_zh(self, slot: SlotDefinition) -> str:
+        return self.field_zh or slot.zh
 
 
 class IntentDefinition(ContractModel):
@@ -394,8 +400,8 @@ class IntentDefinition(ContractModel):
     @model_validator(mode="after")
     def required_slots_must_be_unique(self) -> IntentDefinition:
         _ensure_unique(
-            [requirement.slot_name for requirement in self.required_slots],
-            f"intent {self.name} required slot names",
+            [requirement.effective_name() for requirement in self.required_slots],
+            f"intent {self.name} parameter field names",
         )
         return self
 
@@ -544,11 +550,6 @@ class RuntimeConfigSnapshot(ContractModel):
                             f"intent {intent.name} default for required slot "
                             f"{requirement.slot_name} must be an enabled canonical enum value"
                         )
-                if intent.route == "training_business" and requirement.default_value is None:
-                    raise ValueError(
-                        f"training intent {intent.name} required slot "
-                        f"{requirement.slot_name} needs a default because training cannot clarify"
-                    )
         for example in self.examples:
             if example.route not in route_name_set:
                 raise ValueError(f"example references unknown route {example.route}")
@@ -605,8 +606,7 @@ class PromptBuildResult(ContractModel):
 class OutputValidationIssue(ContractModel):
     code: Literal[
         "SLOT_SPAN_INVALID",
-        "INTENTS_EMPTY_NON_TRAINING",
-        "CLARIFICATION_FORCED_OFF",
+        "INTENTS_EMPTY",
         "REQUIRED_SLOT_DEFAULT_APPLIED",
         "REQUIRED_SLOT_MISSING",
     ]
@@ -662,40 +662,46 @@ def validate_llm_output(
             IntentCandidate(name=configured.name, zh=configured.zh, confidence=candidate.confidence)
         )
 
-    slots_by_name = {item.name: item for item in config.active_slots}
     issues: list[OutputValidationIssue] = []
-    if not output.intents and output.route != "training_business":
-        issues.append(OutputValidationIssue(code="INTENTS_EMPTY_NON_TRAINING"))
-
-    normalized_need_clarification = output.need_clarification
-    normalized_clarification = output.clarification
-    if output.route == "training_business" and output.need_clarification:
-        normalized_need_clarification = False
-        normalized_clarification = None
-        issues.append(OutputValidationIssue(code="CLARIFICATION_FORCED_OFF"))
+    if not output.intents:
+        issues.append(OutputValidationIssue(code="INTENTS_EMPTY"))
 
     normalized_slots: list[SlotValue] = []
+    selected_intent_name = normalized_intents[0].name if normalized_intents else None
     for slot in output.slots:
-        configured_slot = slots_by_name.get(slot.name)
-        if configured_slot is None:
+        resolved = _resolve_intent_parameter(
+            config, selected_intent_name, slot.name
+        )
+        if resolved is None:
             raise BusinessOutputValidationError(f"slot {slot.name} is not enabled")
+        configured_slot, requirement, field_name, field_zh = resolved
+        raw_value = slot.raw_value or str(slot.value)
         enum_value: EnumValueDefinition | None = None
         if configured_slot.value_type == "enum":
             assert configured_slot.enum_group is not None
-            enum_value = _find_enum_value(config.enums[configured_slot.enum_group], slot.value)
+            enum_value = _find_enum_value(
+                config.enums[configured_slot.enum_group], str(slot.value)
+            )
+            if enum_value is None and requirement is not None and requirement.note:
+                enum_value = _find_enum_value(
+                    config.enums[configured_slot.enum_group], raw_value
+                )
             if enum_value is None:
                 raise BusinessOutputValidationError(
                     f"slot {slot.name} value is not in enum {configured_slot.enum_group}"
                 )
         normalized_slot = SlotValue(
-            name=configured_slot.name,
-            zh=configured_slot.zh,
+            name=field_name,
+            zh=field_zh,
             value=slot.value,
+            raw_value=raw_value,
             start=slot.start,
             end=slot.end,
             confidence=slot.confidence,
         )
-        repaired = _validate_or_repair_span(text, normalized_slot, enum_value)
+        repaired = _validate_or_repair_span(
+            text, normalized_slot, enum_value, raw_value=raw_value
+        )
         if repaired is None:
             issues.append(OutputValidationIssue(code="SLOT_SPAN_INVALID", slot=normalized_slot))
         else:
@@ -709,8 +715,8 @@ def validate_llm_output(
             intents=normalized_intents,
             slots=normalized_slots,
             risk=output.risk,
-            need_clarification=normalized_need_clarification,
-            clarification=normalized_clarification,
+            need_clarification=output.need_clarification,
+            clarification=output.clarification,
         ),
         validation_issues=issues,
     )
@@ -780,30 +786,65 @@ def validate_recognition_output(
     *,
     request_id: str,
     text: str,
-    program_slots: list[SlotValue] | None = None,
+    slot_candidates: list[SlotCandidate] | None = None,
     slot_search_range: tuple[int, int] | None = None,
 ) -> ValidatedIntentOutput:
-    """Validate lightweight model Slots and merge deterministic enum matches."""
+    """Validate model bindings against deterministic base-Slot candidates."""
 
     config = validate_runtime_config_snapshot(snapshot)
-    slots_by_name = {item.name: item for item in config.active_slots}
+    selected_intent_name = output.intents[0].name if output.intents else None
+    candidates = slot_candidates or []
     text_slots: list[SlotValue] = []
     for slot in output.slots:
-        configured = slots_by_name.get(slot.name)
-        if configured is None:
+        resolved = _resolve_intent_parameter(
+            config, selected_intent_name, slot.name
+        )
+        if resolved is None:
             raise BusinessOutputValidationError(f"slot {slot.name} is not enabled")
-        if configured.value_type == "enum":
-            # Enum Slots are server-owned. Ignore a redundant model emission so
-            # an otherwise usable recognition result does not fail closed.
-            continue
-        span = _find_unique_value_span_in_range(
-            text, slot.value, slot_search_range
+        configured, requirement, field_name, field_zh = resolved
+        base_candidates = [
+            candidate
+            for candidate in candidates
+            if candidate.slot_name == configured.name
+        ]
+        matching_candidates = [
+            candidate
+            for candidate in base_candidates
+            if slot.value in {candidate.value, candidate.source}
+        ]
+        requires_candidate = configured.value_type == "enum"
+        transformed_candidate = (
+            base_candidates[0]
+            if not matching_candidates
+            and requirement is not None
+            and requirement.note
+            and len(base_candidates) == 1
+            else None
+        )
+        if requires_candidate and not matching_candidates and transformed_candidate is None:
+            raise BusinessOutputValidationError(
+                f"slot {slot.name} value is not in candidates for {configured.name}"
+            )
+        candidate = (
+            matching_candidates[0] if matching_candidates else transformed_candidate
+        )
+        span = (
+            (candidate.start, candidate.end)
+            if candidate is not None
+            else _find_unique_value_span_in_range(text, slot.value, slot_search_range)
         )
         text_slots.append(
             SlotValue(
-                name=configured.name,
-                zh=configured.zh,
-                value=slot.value,
+                name=field_name,
+                zh=field_zh,
+                value=(
+                    slot.value
+                    if transformed_candidate is not None
+                    else candidate.value
+                    if candidate is not None
+                    else slot.value
+                ),
+                raw_value=candidate.source if candidate is not None else slot.value,
                 start=span[0] if span is not None else 0,
                 end=span[1] if span is not None else 0,
                 confidence=slot.confidence,
@@ -825,14 +866,13 @@ def validate_recognition_output(
         request_id=request_id,
         text=text,
     )
-    merged = _merge_slots(validated.result.slots, program_slots or [])
     selected_intent = (
         validated.result.intents[0].name if validated.result.intents else None
     )
-    merged, required_questions, requirement_issues = _apply_required_slots(
+    normalized, required_questions, requirement_issues = _apply_required_slots(
         config,
         selected_intent,
-        merged,
+        validated.result.slots,
     )
     need_clarification = validated.result.need_clarification or bool(required_questions)
     clarification = _combine_clarifications(
@@ -842,7 +882,7 @@ def validate_recognition_output(
     return ValidatedIntentOutput(
         result=validated.result.model_copy(
             update={
-                "slots": merged,
+                "slots": normalized,
                 "need_clarification": need_clarification,
                 "clarification": clarification,
             }
@@ -857,14 +897,14 @@ def validate_recognition_output_v2(
     *,
     request_id: str,
     text: str,
-    program_slots_by_action: dict[str, list[SlotValue]] | None = None,
+    slot_candidates_by_action: dict[str, list[SlotCandidate]] | None = None,
     action_ranges: dict[str, tuple[int, int]] | None = None,
 ) -> ValidatedIntentOutputV2:
-    """Validate lightweight action outputs and merge action-scoped enum matches."""
+    """Validate action outputs against action-scoped base-Slot candidates."""
 
     actions: list[IntentAction] = []
     issues: list[OutputValidationIssue] = []
-    scoped_program_slots = program_slots_by_action or {}
+    scoped_candidates = slot_candidates_by_action or {}
     scoped_action_ranges = action_ranges or {}
     required_questions: list[str] = []
     for action in sorted(output.actions, key=lambda item: item.order):
@@ -883,7 +923,7 @@ def validate_recognition_output_v2(
             snapshot,
             request_id=request_id,
             text=text,
-            program_slots=scoped_program_slots.get(action.action_id, []),
+            slot_candidates=scoped_candidates.get(action.action_id, []),
             slot_search_range=scoped_action_ranges.get(action.action_id),
         )
         normalized_intent = (
@@ -923,16 +963,6 @@ def validate_recognition_output_v2(
     )
 
 
-def _merge_slots(model_slots: list[SlotValue], program_slots: list[SlotValue]) -> list[SlotValue]:
-    merged: dict[tuple[str, str, int, int], SlotValue] = {}
-    for slot in [*model_slots, *program_slots]:
-        merged[(slot.name, slot.value, slot.start, slot.end)] = slot
-    return sorted(
-        merged.values(),
-        key=lambda slot: (slot.start, slot.end, slot.name, slot.value),
-    )
-
-
 def _apply_required_slots(
     snapshot: RuntimeConfigSnapshot,
     intent_name: str | None,
@@ -953,33 +983,38 @@ def _apply_required_slots(
     missing_labels: list[str] = []
     issues: list[OutputValidationIssue] = []
     for requirement in intent.required_slots:
-        if requirement.slot_name in present_names:
+        field_name = requirement.effective_name()
+        if field_name in present_names:
             continue
         definition = slots_by_name[requirement.slot_name]
-        if requirement.default_value is None:
-            missing_labels.append(f"{definition.zh}（{definition.name}）")
+        if requirement.default_value is None and requirement.required:
+            field_zh = requirement.effective_zh(definition)
+            missing_labels.append(f"{field_zh}（{field_name}）")
             issues.append(
                 OutputValidationIssue(
                     code="REQUIRED_SLOT_MISSING",
-                    required_slot=definition.name,
+                    required_slot=field_name,
                 )
             )
             continue
+        if requirement.default_value is None:
+            continue
         defaulted = SlotValue(
-            name=definition.name,
-            zh=definition.zh,
+            name=field_name,
+            zh=requirement.effective_zh(definition),
             value=requirement.default_value,
+            raw_value=None,
             start=0,
             end=0,
             confidence=1,
         )
         normalized.append(defaulted)
-        present_names.add(definition.name)
+        present_names.add(field_name)
         issues.append(
             OutputValidationIssue(
                 code="REQUIRED_SLOT_DEFAULT_APPLIED",
                 slot=defaulted,
-                required_slot=definition.name,
+                required_slot=field_name,
             )
         )
 
@@ -987,6 +1022,40 @@ def _apply_required_slots(
         [f"请补充必填参数：{'、'.join(missing_labels)}"] if missing_labels else []
     )
     return normalized, questions, issues
+
+
+def _resolve_intent_parameter(
+    snapshot: RuntimeConfigSnapshot,
+    intent_name: str | None,
+    output_name: str,
+) -> tuple[SlotDefinition, IntentRequiredSlot | None, str, str] | None:
+    slots_by_name = {item.name: item for item in snapshot.active_slots}
+    if intent_name is not None:
+        intent = next(
+            (item for item in snapshot.active_intents if item.name == intent_name),
+            None,
+        )
+        if intent is not None:
+            for requirement in intent.required_slots:
+                if requirement.effective_name() != output_name:
+                    continue
+                definition = slots_by_name[requirement.slot_name]
+                return (
+                    definition,
+                    requirement,
+                    requirement.effective_name(),
+                    requirement.effective_zh(definition),
+                )
+            if any(
+                requirement.slot_name == output_name
+                and requirement.effective_name() != output_name
+                for requirement in intent.required_slots
+            ):
+                return None
+    definition = slots_by_name.get(output_name)
+    if definition is None:
+        return None
+    return definition, None, definition.name, definition.zh
 
 
 def _combine_clarifications(
@@ -1023,7 +1092,9 @@ def _find_unique_value_span_in_range(
 
 def _find_enum_value(values: list[EnumValueDefinition], value: str) -> EnumValueDefinition | None:
     for enum_value in values:
-        if enum_value.enabled and value in _enum_forms(enum_value):
+        if not enum_value.enabled:
+            continue
+        if value in _enum_forms(enum_value):
             return enum_value
     return None
 
@@ -1033,9 +1104,17 @@ def _enum_forms(value: EnumValueDefinition) -> tuple[str, ...]:
 
 
 def _validate_or_repair_span(
-    text: str, slot: SlotValue, enum_value: EnumValueDefinition | None
+    text: str,
+    slot: SlotValue,
+    enum_value: EnumValueDefinition | None,
+    *,
+    raw_value: str,
 ) -> SlotValue | None:
-    accepted_values = _enum_forms(enum_value) if enum_value is not None else (slot.value,)
+    accepted_values = (
+        tuple(dict.fromkeys((raw_value, *_enum_forms(enum_value))))
+        if enum_value is not None
+        else (raw_value,)
+    )
     existing = _utf16_substring(text, slot.start, slot.end)
     if existing is not None and existing in accepted_values:
         return slot

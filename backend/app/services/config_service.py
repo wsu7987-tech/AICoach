@@ -27,7 +27,7 @@ from app.schemas.intent import (
     RuntimeConfigSnapshot,
     sha256_canonical,
 )
-from app.services.slot_extractor import extract_enum_slots
+from app.services.slot_extractor import extract_slot_candidates
 
 
 class ConfigError(Exception):
@@ -144,12 +144,12 @@ async def preview_prompt(
     row = await require_draft(session)
     payload, _ = validate_business(row.draft_json)
     snapshot = RuntimeConfigSnapshot.model_validate(payload)
-    program_enum_slots = extract_enum_slots(text, snapshot)
+    slot_candidates = extract_slot_candidates(text, snapshot)
     return PromptBuilder().preview(
         snapshot,
         text,
         context,
-        pre_extracted_slots=program_enum_slots,
+        slot_candidates=slot_candidates,
     )
 
 
@@ -214,9 +214,7 @@ async def require_release(session: AsyncSession, release_id: int) -> ConfigRelea
 async def release_configuration(session: AsyncSession, release_id: int) -> dict[str, Any]:
     """Return one validated, immutable business configuration release."""
     release = await require_release(session, release_id)
-    payload, digest = validate_business(release.snapshot_json)
-    if digest != release.config_snapshot_hash:
-        raise ConfigError("CONFIG_CORRUPT", "配置版本内容校验失败")
+    payload, _ = validate_business(release.snapshot_json)
     return {
         **release_view(release),
         "config_snapshot_hash": release.config_snapshot_hash,

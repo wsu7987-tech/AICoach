@@ -8,11 +8,14 @@ from app.schemas.intent import (
     BusinessOutputValidationError,
     IntentAnalyzeRequest,
     IntentCandidate,
+    IntentRequiredSlot,
     IntentResult,
+    LLMRecognitionOutput,
     LLMStructuredIntentOutput,
     RuntimeConfigSnapshot,
     SlotValue,
     validate_llm_output,
+    validate_recognition_output,
     validate_runtime_config_snapshot,
 )
 
@@ -79,13 +82,45 @@ def test_training_business_supports_route_only_output_and_runtime_mapping(
         need_clarification=True,
         clarification="请选择训练项目",
     )
-    normalized = validate_llm_output(
+    validated_clarification = validate_llm_output(
         raw_training_clarification, snapshot, request_id="req_2", text="开始训练"
     )
 
-    assert normalized.result.need_clarification is False
-    assert normalized.result.clarification is None
-    assert [issue.code for issue in normalized.validation_issues] == ["CLARIFICATION_FORCED_OFF"]
+    assert validated_clarification.result.need_clarification is True
+    assert validated_clarification.result.clarification == "请选择训练项目"
+    assert [issue.code for issue in validated_clarification.validation_issues] == ["INTENTS_EMPTY"]
+
+
+def test_training_required_parameter_uses_same_missing_and_default_rules(
+    snapshot: RuntimeConfigSnapshot,
+) -> None:
+    configured = snapshot.model_copy(deep=True)
+    configured.intents[0].required_slots = [
+        IntentRequiredSlot(slot_name="exercise", required=True)
+    ]
+    output = LLMRecognitionOutput(
+        route="training_business",
+        intents=[IntentCandidate(name="start_training", zh="开始训练", confidence=1)],
+        risk=None,
+        need_clarification=False,
+    )
+
+    missing = validate_recognition_output(
+        output, configured, request_id="req_1", text="开始训练"
+    )
+    assert missing.result.need_clarification is True
+    assert missing.result.clarification == "请补充必填参数：动作（exercise）"
+    assert [issue.code for issue in missing.validation_issues] == ["REQUIRED_SLOT_MISSING"]
+
+    configured.intents[0].required_slots[0].default_value = "深蹲"
+    defaulted = validate_recognition_output(
+        output, configured, request_id="req_2", text="开始训练"
+    )
+    assert defaulted.result.need_clarification is False
+    assert defaulted.result.slots[0].value == "深蹲"
+    assert [issue.code for issue in defaulted.validation_issues] == [
+        "REQUIRED_SLOT_DEFAULT_APPLIED"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -122,8 +157,7 @@ def test_all_routes_support_route_only_output(route: str, snapshot: RuntimeConfi
 
     assert runtime.intents == []
     assert validated.result.route == route
-    expected_issue_codes = [] if route == "training_business" else ["INTENTS_EMPTY_NON_TRAINING"]
-    assert [issue.code for issue in validated.validation_issues] == expected_issue_codes
+    assert [issue.code for issue in validated.validation_issues] == ["INTENTS_EMPTY"]
 
 
 @pytest.mark.parametrize("confidence", [-0.01, 1.01])
@@ -186,7 +220,7 @@ def test_risk_is_required_but_null_is_valid_and_runtime_fields_are_exact() -> No
         ("social_chat", True, "  "),
     ],
 )
-def test_clarification_and_training_business_invariants(
+def test_clarification_invariants(
     route: str, need_clarification: bool, clarification: str | None
 ) -> None:
     with pytest.raises(ValidationError):
@@ -339,9 +373,11 @@ def test_unlocatable_slot_is_dropped_without_failing_intent_result(
     validated = validate_llm_output(output, snapshot, request_id="req_1", text="我要练胸")
 
     assert validated.result.slots == []
-    assert len(validated.validation_issues) == 1
-    assert validated.validation_issues[0].code == "SLOT_SPAN_INVALID"
-    assert validated.validation_issues[0].slot.value == "knee"
+    assert [issue.code for issue in validated.validation_issues] == [
+        "INTENTS_EMPTY",
+        "SLOT_SPAN_INVALID",
+    ]
+    assert validated.validation_issues[1].slot.value == "knee"
 
 
 def test_snapshot_validation_reconstructs_instances_before_returning_them(

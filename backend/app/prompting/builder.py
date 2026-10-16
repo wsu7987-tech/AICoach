@@ -11,7 +11,7 @@ from app.schemas.intent import (
     PromptBuildResult,
     PromptMessage,
     RuntimeConfigSnapshot,
-    SlotValue,
+    SlotCandidate,
     canonical_json,
     validate_runtime_config_snapshot,
 )
@@ -27,7 +27,7 @@ class PromptBuilder:
         context: dict[str, Any] | None = None,
         *,
         output_version: Literal[1, 2] = 1,
-        pre_extracted_slots: list[SlotValue] | None = None,
+        slot_candidates: list[SlotCandidate] | None = None,
     ) -> PromptBuildResult:
         config = validate_runtime_config_snapshot(snapshot)
         output_model = (
@@ -50,9 +50,7 @@ class PromptBuilder:
             rules = "\n".join(f"- {rule}" for rule in prompt_rules)
             system_sections.append(f"## 识别规则\n\n{rules}")
         system_sections.extend(module for module in business_modules if module)
-        extracted_module = _render_pre_extracted_slots(
-            text, pre_extracted_slots or []
-        )
+        extracted_module = _render_slot_candidates(slot_candidates or [])
         if extracted_module:
             system_sections.append(extracted_module)
         system_sections.append(_render_output_contract(output_version))
@@ -71,7 +69,8 @@ class PromptBuilder:
         final_prompt = f"[SYSTEM]\n{system_content}\n\n[USER]\n{user_content}"
         prompt_hash = hashlib.sha256(final_prompt.encode("utf-8")).hexdigest()
         enum_matcher_text = _render_all_enum_matchers(config)
-        effective_text = "\n\n".join([*business_modules, enum_matcher_text])
+        matcher_text = enum_matcher_text
+        effective_text = "\n\n".join([*business_modules, matcher_text])
         return PromptBuildResult(
             messages=messages,
             final_prompt=final_prompt,
@@ -85,6 +84,9 @@ class PromptBuilder:
                 "enum_matcher_hash": hashlib.sha256(
                     enum_matcher_text.encode("utf-8")
                 ).hexdigest(),
+                "candidate_matcher_hash": hashlib.sha256(
+                    matcher_text.encode("utf-8")
+                ).hexdigest(),
                 "output_schema_name": output_model.__name__,
             },
         )
@@ -95,7 +97,7 @@ class PromptBuilder:
         text: str,
         context: dict[str, Any] | None = None,
         *,
-        pre_extracted_slots: list[SlotValue] | None = None,
+        slot_candidates: list[SlotCandidate] | None = None,
     ) -> PromptBuildResult:
         """Return the same prompt as runtime without calling a model."""
 
@@ -103,7 +105,7 @@ class PromptBuilder:
             snapshot,
             text=text,
             context=context,
-            pre_extracted_slots=pre_extracted_slots,
+            slot_candidates=slot_candidates,
         )
 
     def preview_routes(self, snapshot: RuntimeConfigSnapshot | dict[str, Any]) -> str:
@@ -242,18 +244,20 @@ def _render_intents(
             lines.append(f"- {intent.name}：{intent.description}")
             if intent.required_slots:
                 slot_by_name = {slot.name: slot for slot in snapshot.active_slots}
-                requirements = []
+                parameters = []
                 for requirement in intent.required_slots:
                     slot = slot_by_name[requirement.slot_name]
-                    default_label = (
-                        f"，缺失时使用默认值 {requirement.default_value}"
-                        if requirement.default_value is not None
-                        else "，缺失时必须追问"
+                    field_name = requirement.effective_name()
+                    field_zh = requirement.effective_zh(slot)
+                    attributes = ["必填" if requirement.required else "可选"]
+                    if requirement.default_value is not None:
+                        attributes.append(f"默认={requirement.default_value}")
+                    if requirement.note:
+                        attributes.append("备注=" + requirement.note)
+                    parameters.append(
+                        f"{field_name}/{field_zh}<-{slot.name}[{';'.join(attributes)}]"
                     )
-                    requirements.append(
-                        f"{slot.name}（{slot.zh}{default_label}）"
-                    )
-                lines.append(f"  必填参数：{'、'.join(requirements)}")
+                lines.append(f"  参数：{'；'.join(parameters)}")
             intent_examples = [item.text for item in examples if item.intent == intent.name]
             if intent_examples:
                 lines.append("  典型说法：")
@@ -281,7 +285,7 @@ def _render_slots(
     lines = [
         "## 由模型提取的文本 Slot",
         "",
-        "只提取用户原话中明确出现的文本。枚举 Slot 已由程序处理，不要返回枚举 Slot。",
+        "只提取用户原话中明确出现的开放文本 Slot。程序候选已单独提供。",
         "",
     ]
     for slot in slots:
@@ -313,9 +317,9 @@ def _render_enum_matcher(
     ]
     values = [value for value in snapshot.enums[enum_group] if value.enabled]
     lines = [
-        "## 程序枚举匹配规则",
+        "## 程序候选匹配规则",
         "",
-        "该词典不进入 LLM Prompt。程序命中任一表达后输出 canonical。",
+        "该配置不进入 LLM Prompt；运行时只提供本次实际命中的候选值。",
         "",
     ]
     if slots:
@@ -344,20 +348,26 @@ def _render_all_enum_matchers(snapshot: RuntimeConfigSnapshot) -> str:
     return "\n\n".join(_render_enum_matcher(snapshot, group) for group in groups)
 
 
-def _render_pre_extracted_slots(text: str, slots: list[SlotValue]) -> str:
-    if not slots:
+def _render_slot_candidates(candidates: list[SlotCandidate]) -> str:
+    if not candidates:
         return ""
     lines = [
-        "## 程序已提取的枚举参数",
+        "## 程序提取的 Slot 候选值",
         "",
-        "以下参数仅用于辅助判断 Route 和 Intent，已经由程序处理，不要在 slots 中重复返回。",
+        "候选值按基础 Slot 分组且每组只出现一次。识别 Intent 后，将候选值绑定到该 Intent 的参数字段，并遵守该参数的备注；不得使用与候选值无关的值。",
         "",
     ]
-    for slot in slots:
-        source = _utf16_substring(text, slot.start, slot.end) or slot.value
-        lines.append(
-            f"- {slot.name}（{slot.zh}）：{slot.value}（原文：{source}）"
+    grouped: dict[tuple[str, str], list[str]] = {}
+    for candidate in candidates:
+        label = (
+            candidate.source
+            if candidate.source == candidate.value
+            else f"{candidate.source}->{candidate.value}"
         )
+        grouped.setdefault((candidate.slot_name, candidate.slot_zh), []).append(label)
+    for (slot_name, slot_zh), values in grouped.items():
+        unique_values = list(dict.fromkeys(values))
+        lines.append(f"- {slot_name}（{slot_zh}）：{canonical_json(unique_values)}")
     return "\n".join(lines)
 
 
@@ -411,7 +421,9 @@ def _render_output_contract(output_version: Literal[1, 2]) -> str:
         "## 输出要求\n\n"
         "只返回一个符合下方 JSON Schema 的 JSON 对象，不要补充解释或 Markdown。\n"
         "intents 中每一项必须使用 name、zh、confidence 字段；不得使用 intent 字段。\n"
-        "slots 只返回文本型 Slot，value 必须复制用户原话中的完整文本；不要返回枚举型 Slot。\n"
+        "slots.name 使用所选 Intent 参数的英文字段；未配置字段映射时使用基础 Slot 名。\n"
+        "程序候选型参数的 value 必须来源于对应基础 Slot 候选；备注要求转换时返回转换后的最终值。\n"
+        "开放文本 value 必须复制用户原话；所有参数都必须遵守所选 Intent 中配置的备注。\n"
         "evidence 必须是对象数组；没有证据时返回空数组。\n\n"
         f"### JSON Schema\n\n{schema}\n\n"
         f"### 标准示例\n\n{example}"
@@ -467,7 +479,9 @@ def _render_compound_output_contract() -> str:
         "actions 不设数量上限；action_id 按 action_1、action_2 递增，order 从 1 连续递增。\n"
         "单动作使用 single；“并且/同时”使用 parallel 且 depends_on 为空；“先…再…”使用 sequential，后续动作依赖前序动作；“或者”使用 alternative、depends_on 为空，并要求澄清。\n"
         "每个 action 的 source_text 必须逐字复制该动作对应的连续用户原话，不含连接词；不得改写。\n"
-        "每个 action 只能包含自己的 route、intent 和文本型 slots；不要返回枚举型 Slot；intent 必须使用 name、zh、confidence 字段。\n"
+        "每个 action 只能包含自己的 route、intent 和 slots；slot.name 使用该 Intent 参数的英文字段。\n"
+        "程序候选型 value 必须来源于对应候选列表；备注要求转换时返回转换后的最终值，并遵守备注。\n"
+        "未配置字段映射时 slot.name 使用基础 Slot 名；intent 必须使用 name、zh、confidence 字段。\n"
         "evidence 必须是对象数组；没有证据时返回空数组。\n\n"
         f"### JSON Schema\n\n{schema}\n\n"
         f"### 标准示例\n\n{example}"

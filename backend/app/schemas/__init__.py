@@ -15,6 +15,7 @@ from app.schemas.intent import (
     PromptBuildResult,
     RiskInfo,
     RuntimeConfigSnapshot,
+    SlotCandidate,
     SlotValue,
     validate_runtime_config_snapshot,
 )
@@ -34,6 +35,7 @@ __all__ = [
     "PromptBuildResult",
     "RiskInfo",
     "RuntimeConfigSnapshot",
+    "SlotCandidate",
     "SlotValue",
     "validate_runtime_config_snapshot",
 ]

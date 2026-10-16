@@ -1,68 +1,72 @@
-"""Deterministic Slot extraction that does not consume LLM tokens."""
+"""Deterministic candidate extraction for reusable base Slots."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.schemas.intent import RuntimeConfigSnapshot, SlotValue
+from app.schemas.intent import RuntimeConfigSnapshot, SlotCandidate
 
 
 @dataclass(frozen=True)
-class _EnumMatch:
+class _CandidateMatch:
     slot_order: int
     value_order: int
     form_order: int
     slot_name: str
     slot_zh: str
-    canonical: str
+    value: str
+    source: str
     char_start: int
     char_end: int
 
 
-def extract_enum_slots(text: str, snapshot: RuntimeConfigSnapshot) -> list[SlotValue]:
-    """Match enabled enum forms and return canonical values with UTF-16 spans.
+def extract_slot_candidates(
+    text: str,
+    snapshot: RuntimeConfigSnapshot,
+) -> list[SlotCandidate]:
+    """Extract each enabled base Slot's candidates exactly once.
 
-    Matching is exact and deterministic. At one character offset the longest
-    configured form wins, which prevents a short alias such as ``胸`` from
-    shadowing ``胸部``.
+    Enum literals and aliases return their configured canonical value.
+    Overlapping matches within one Slot use the longest match at a position.
     """
 
     offsets = _utf16_offsets(text)
-    matches: list[_EnumMatch] = []
+    matches: list[_CandidateMatch] = []
     for slot_order, slot in enumerate(snapshot.slots):
-        if not slot.enabled or slot.value_type != "enum" or not slot.enum_group:
+        if not slot.enabled:
             continue
-        for value_order, value in enumerate(snapshot.enums[slot.enum_group]):
-            if not value.enabled:
-                continue
-            forms = list(dict.fromkeys((value.canonical, value.display, *value.aliases)))
-            for form_order, form in enumerate(forms):
-                if not form:
+        if slot.value_type == "enum" and slot.enum_group:
+            for value_order, value in enumerate(snapshot.enums[slot.enum_group]):
+                if not value.enabled:
                     continue
-                search_from = 0
-                while True:
-                    char_start = text.find(form, search_from)
-                    if char_start < 0:
-                        break
-                    char_end = char_start + len(form)
-                    if not _has_safe_boundaries(text, form, char_start, char_end):
-                        search_from = char_start + 1
+                forms = list(dict.fromkeys((value.canonical, value.display, *value.aliases)))
+                for form_order, form in enumerate(forms):
+                    if not form:
                         continue
-                    matches.append(
-                        _EnumMatch(
-                            slot_order=slot_order,
-                            value_order=value_order,
-                            form_order=form_order,
-                            slot_name=slot.name,
-                            slot_zh=slot.zh,
-                            canonical=value.canonical,
-                            char_start=char_start,
-                            char_end=char_end,
+                    search_from = 0
+                    while True:
+                        char_start = text.find(form, search_from)
+                        if char_start < 0:
+                            break
+                        char_end = char_start + len(form)
+                        if not _has_safe_boundaries(text, form, char_start, char_end):
+                            search_from = char_start + 1
+                            continue
+                        matches.append(
+                            _CandidateMatch(
+                                slot_order=slot_order,
+                                value_order=value_order,
+                                form_order=form_order,
+                                slot_name=slot.name,
+                                slot_zh=slot.zh,
+                                value=value.canonical,
+                                source=text[char_start:char_end],
+                                char_start=char_start,
+                                char_end=char_end,
+                            )
                         )
-                    )
-                    search_from = char_start + 1
-
-    selected: list[_EnumMatch] = []
+                        search_from = char_start + 1
+    selected: list[_CandidateMatch] = []
     for slot_order in sorted({match.slot_order for match in matches}):
         slot_matches = [match for match in matches if match.slot_order == slot_order]
         slot_matches.sort(
@@ -73,7 +77,7 @@ def extract_enum_slots(text: str, snapshot: RuntimeConfigSnapshot) -> list[SlotV
                 match.form_order,
             )
         )
-        accepted: list[_EnumMatch] = []
+        accepted: list[_CandidateMatch] = []
         for match in slot_matches:
             if any(
                 match.char_start < item.char_end and item.char_start < match.char_end
@@ -83,22 +87,28 @@ def extract_enum_slots(text: str, snapshot: RuntimeConfigSnapshot) -> list[SlotV
             accepted.append(match)
         selected.extend(accepted)
 
-    unique: dict[tuple[str, str, int, int], SlotValue] = {}
+    unique: dict[tuple[str, str, int, int], SlotCandidate] = {}
     for match in selected:
         start = offsets[match.char_start]
         end = offsets[match.char_end]
-        key = (match.slot_name, match.canonical, start, end)
-        unique[key] = SlotValue(
-            name=match.slot_name,
-            zh=match.slot_zh,
-            value=match.canonical,
+        key = (match.slot_name, match.value, start, end)
+        unique[key] = SlotCandidate(
+            slot_name=match.slot_name,
+            slot_zh=match.slot_zh,
+            value=match.value,
+            source=match.source,
             start=start,
             end=end,
             confidence=1.0,
         )
     return sorted(
         unique.values(),
-        key=lambda slot: (slot.start, slot.end, slot.name, slot.value),
+        key=lambda candidate: (
+            candidate.start,
+            candidate.end,
+            candidate.slot_name,
+            candidate.value,
+        ),
     )
 
 
@@ -123,17 +133,19 @@ def locate_action_ranges(
     return ranges
 
 
-def scope_enum_slots_to_actions(
-    slots: list[SlotValue],
+def scope_slot_candidates_to_actions(
+    candidates: list[SlotCandidate],
     action_ranges: dict[str, tuple[int, int]],
-) -> dict[str, list[SlotValue]]:
-    """Assign a deterministic enum match only to the action fragment containing it."""
+) -> dict[str, list[SlotCandidate]]:
+    """Assign each candidate only to the action fragment containing it."""
 
-    scoped: dict[str, list[SlotValue]] = {action_id: [] for action_id in action_ranges}
-    for slot in slots:
+    scoped: dict[str, list[SlotCandidate]] = {
+        action_id: [] for action_id in action_ranges
+    }
+    for candidate in candidates:
         for action_id, (start, end) in action_ranges.items():
-            if start <= slot.start and slot.end <= end:
-                scoped[action_id].append(slot)
+            if start <= candidate.start and candidate.end <= end:
+                scoped[action_id].append(candidate)
                 break
     return scoped
 

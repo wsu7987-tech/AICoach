@@ -29,7 +29,11 @@ export interface Intent {
 }
 export interface IntentRequiredSlot {
   slot_name: string;
+  field_name: string | null;
+  field_zh: string | null;
+  required: boolean;
   default_value: string | null;
+  note: string | null;
 }
 export interface Example {
   text: string;

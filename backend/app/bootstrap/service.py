@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ConfigDraft
+from app.schemas.intent import RuntimeConfigSnapshot
 
 
 class BootstrapValidationError(ValueError):
@@ -67,7 +68,9 @@ def parse_bootstrap_json(raw: str) -> BootstrapPayload:
     except json.JSONDecodeError as exc:
         raise BootstrapValidationError(f"invalid JSON: {exc.msg}") from exc
     try:
-        return BootstrapPayload.model_validate(decoded)
+        payload = BootstrapPayload.model_validate(decoded)
+        RuntimeConfigSnapshot.model_validate(payload.model_dump(mode="json"))
+        return payload
     except ValidationError as exc:
         raise BootstrapValidationError(str(exc)) from exc
 
@@ -87,6 +90,7 @@ async def import_bootstrap_draft(
     are created or changed by this operation.
     """
 
+    RuntimeConfigSnapshot.model_validate(payload.model_dump(mode="json"))
     existing = await session.scalar(select(ConfigDraft).where(ConfigDraft.id == 1))
     desired = payload.model_dump(mode="json")
     if existing is None:

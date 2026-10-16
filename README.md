@@ -27,8 +27,8 @@
 ## 一期必须完成
 
 - `POST /api/v1/intent/analyze` 稳定 Runtime API。
-- 7 个一级 Route；训练业务一期只验收一级 Route。
-- 非训练业务可输出二级 Intent、Slots、Risk、Clarification。
+- 7 个一级 Route；所有业务按相同规则输出二级 Intent、Slots、Risk、Clarification。
+- 计划中的结果匹配验证对训练业务只比较一级 Route；该功能尚未实现。
 - Prompt = 固定模板 + 已发布配置动态组装。
 - 通用 OpenAI-compatible Provider，通过 Base URL + API Key + Model Name 接入兼容服务；优先 JSON Schema Structured Output。
 - 每次 Provider Attempt 可追溯；Secret 必须脱敏。
@@ -47,7 +47,7 @@
 - 确定性 Safety Guard / 关键词硬路由，只保留未来扩展点说明。
 - RAG、向量库、Redis、MQ。
 - 多 Agent / 自由 Agent。
-- 训练计划生成、训练业务缺参追问。
+- 训练计划生成、训练流程中的多轮缺参交互。
 - 平台业务 API 的真实接入。
 - 自建 LLMOps 平台、复杂权限系统、复杂监控系统。
 

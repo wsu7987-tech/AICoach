@@ -86,7 +86,7 @@
 }
 .slot-type-guide {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 10px;
   margin: 16px 0;
 }
@@ -113,7 +113,7 @@
 }
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 10px;
   margin: 16px 0;
 }
@@ -509,16 +509,27 @@
 }
 .intent-required-row {
   display: grid;
-  grid-template-columns: minmax(180px, 0.9fr) minmax(220px, 1.1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: 12px;
   padding: 12px 2px;
   border-bottom: 1px solid #edf0f5;
 }
-.intent-required-row label {
+.intent-parameter-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.intent-parameter-fields label {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+.intent-parameter-fields .intent-parameter-switch {
+  align-items: flex-start;
+}
+.intent-parameter-fields .intent-parameter-note {
+  grid-column: 1 / -1;
 }
 .utterance-add {
   display: grid;
@@ -985,6 +996,7 @@
   .intent-manager,
   .intent-form-grid,
   .intent-required-row,
+  .intent-parameter-fields,
   .enum-manager,
   .prompt-editor-layout,
   .prompt-preview-workbench,

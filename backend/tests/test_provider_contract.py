@@ -434,7 +434,7 @@ def test_intent_service_validates_output_and_preserves_trace_diagnostics(
 
     assert result.route == "information_query"
     assert result.intents == []
-    assert sink.records[0].validation_issues[0].code == "INTENTS_EMPTY_NON_TRAINING"
+    assert sink.records[0].validation_issues[0].code == "INTENTS_EMPTY"
     assert sink.records[0].attempts[0].provider_request_id == "mock-request"
 
 
@@ -452,7 +452,7 @@ def test_intent_service_validates_output_and_preserves_trace_diagnostics(
             },
             "training_business",
             None,
-            False,
+            True,
         ),
         (
             {
@@ -492,7 +492,7 @@ def test_intent_service_preserves_task_101_contracts(
     assert (result.risk.level if result.risk else None) == expected_risk
     assert result.need_clarification is expected_clarification
     if expected_route == "training_business":
-        assert sink.records[0].validation_issues[0].code == "CLARIFICATION_FORCED_OFF"
+        assert sink.records[0].validation_issues[0].code == "INTENTS_EMPTY"
 
 
 def test_provider_failure_is_not_mapped_to_unknown(scenario_server: _ScenarioServer) -> None:

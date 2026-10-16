@@ -55,9 +55,9 @@ Parser 最终只把业务字段构造成 `IntentResult`；调试字段仅写 Tra
 
 这些 key 是 Java/下游依赖的稳定 API Contract，配置中心不得修改、删除、新增，**也不得 disable**。Draft Validate / Publish 必须校验：routes 恰好包含这 7 个 key 且全部 enabled，否则拒绝发布。可配置的是中文名、描述、Few-shot、二级 Intent、Slot、Enum/Alias 以及既有 Route 下的映射。
 
-约束：`route=training_business` 时 `need_clarification=false` 且 `clarification=null`。全局约束：`need_clarification=false -> clarification=null`；`need_clarification=true -> clarification` 必须为非空字符串。
+所有 Route 采用相同的澄清约束：`need_clarification=false -> clarification=null`；`need_clarification=true -> clarification` 必须为非空字符串。
 
-**`intents` 基数规则（v1.2.5 锁定）：** Runtime Contract 与 `LLMStructuredIntentOutput` 的 `intents` 为 `0..n`，**不设 `min_length`**，所有路由一致。理由：训练业务一期只验收一级 Route（Route-only 输出 `intents=[]` 合法）；对非训练路由，“应当至少有一个二级 Intent”由 Prompt 要求与 Evaluation 判定保证，而不是在 Schema 层拒绝整个请求（拒绝会把一个可用的一级 Route 变成 `MODEL_OUTPUT_SCHEMA_ERROR`）。非训练路由返回空 `intents` 时：请求成功，Trace `validation_json` 记录 `INTENTS_EMPTY_NON_TRAINING`，Evaluation 视为二级 Intent 不匹配。输出 Schema 不得使用 `minItems`（部分 Qwen strict 模式不支持）。完整样例见 `docs/10`。
+**`intents` 基数规则：** Runtime Contract 与 `LLMStructuredIntentOutput` 的 `intents` 为 `0..n`，**不设 `min_length`**，所有路由一致。空 `intents` 不会使请求失败；Trace `validation_json` 统一记录 `INTENTS_EMPTY`。计划中的结果匹配验证对训练业务只比较一级 Route，其他业务还需比较二级 Intent。输出 Schema 不得使用 `minItems`（部分 Qwen strict 模式不支持）。完整样例见 `docs/10`。
 
 ## 4. 动态 Prompt
 
@@ -170,7 +170,7 @@ schema_version / routes / intents / slots / enums / examples / prompt_template
 
 ## 8. 训练业务规则
 
-若 `route=training_business`，一期评测只比较一级 Route。IntentService 仍可以保留模型返回的 intents/slots，便于观察，但不负责训练业务缺参追问。
+训练 Intent 与其他 Intent 使用相同的识别、参数提取、默认值和缺参澄清逻辑。计划中的结果匹配验证对训练业务只比较一级 Route；该验证功能尚未实现。
 
 ## 9. Safety 一期规则
 
@@ -243,5 +243,5 @@ schema_version / routes / intents / slots / enums / examples / prompt_template
 | 39 | `out_of_capability` | 超出能力 | `unknown`（未知/不支持） |  |
 | 40 | `unsupported_feature` | 暂不支持功能 | `unknown`（未知/不支持） |  |
 
-- 训练业务只验收一级 Route；上表中训练类二级 Intent 仅用于观察。
+- 计划中的结果匹配验证对训练业务只比较一级 Route；训练类二级 Intent 仍按相同规则识别和返回。
 - 上线前研发需让产品在配置中心或 Excel“意图归属参考”页确认归属表。

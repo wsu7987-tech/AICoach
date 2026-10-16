@@ -1,62 +1,81 @@
-# Intent 必填参数与默认值设计
+# Intent 参数绑定与候选值设计
 
 ## 目标
 
-在复用现有 Slot 定义的前提下，让每个 Intent 声明自己的必填参数，并为参数选择性配置默认值。
+基础 Slot 沿用原有的 `string` / `enum` 类型：文本 Slot 由模型提取，枚举 Slot 由程序按 canonical、display 和 aliases 匹配。`number` 只是示例中的普通文本 Slot 名称，不是系统类型。Intent 参数定义该值在具体业务中的字段名、是否必填、默认值以及业务转换和限制。
 
-- 用户提供参数：采用提取结果。
-- 用户未提供、配置了默认值：程序补入默认值，不因该参数追问。
-- 用户未提供、未配置默认值：程序强制 `need_clarification=true` 并生成缺参提示。
-- V1 以 Top-1 Intent 为准；V2 对每个 action 的 Intent 分别执行。
+整个识别过程只调用一次 LLM：程序先从用户原文提取枚举 Slot 候选，再把候选、Intent 定义和用户原文放入同一次 Prompt；模型识别 Intent、提取文本 Slot，并将取值绑定到业务字段。
 
 ## 配置模型
-
-Intent 新增兼容字段：
 
 ```json
 {
   "name": "volume_up",
   "required_slots": [
-    { "slot_name": "volume_delta", "default_value": "10" }
+    {
+      "slot_name": "number",
+      "field_name": "volume",
+      "field_zh": "音量值",
+      "required": true,
+      "default_value": null,
+      "note": "只提取正数；5% 统一转换为 5"
+    }
   ]
 }
 ```
 
-`slot_name` 必须引用已启用 Slot，同一个 Intent 内不能重复。枚举 Slot 的默认值必须是已启用的 canonical；文本 Slot 的默认值保存为字符串。旧配置没有该字段时按空列表处理，因此不需要数据库迁移或提升顶层 `schema_version`。
+- `slot_name` 引用一个已启用的基础 Slot。
+- `field_name` 与 `field_zh` 是当前 Intent 中的业务字段映射；未填写的字段分别回退到基础 Slot 的 `name` 和 `zh`。
+- `required` 省略时默认为 `false`；仅显式设为 `true` 的参数在缺失且无默认值时生成追问。
+- `note` 是属于 Intent 参数的自由文本备注，可描述提取限制、值转换或其他业务要求；同一个基础 Slot 在不同 Intent 中可以配置不同备注。
+- 同一个 Intent 可以多次引用同一个基础 Slot，只要求最终业务英文字段不重复。
 
-当前契约规定 `training_business` 不能返回澄清问题，所以训练类 Intent 的必填参数必须配置默认值。
+系统不为备注规定选项、语法或 Slot 类型限制；备注会以原文进入该 Intent 的参数说明，由同一次 LLM 调用在绑定字段时执行。
 
-## 数据流
+## 单次调用数据流
 
 ```text
-Intent + required_slots 配置
-            │
-            ├── Prompt：告诉模型哪些参数必填、缺失时默认或追问
-            │
-用户文本 ──► Slot 提取（LLM 文本 + 程序枚举）
-                         │
-                         ▼
-                 Top-1 Intent / action 校验
-                    ┌────┴────┐
-              已有参数       缺少参数
-                 │        ┌────┴────┐
-                 │      有默认值    无默认值
-                 │         │          │
-                 └────────►补值       └──►强制澄清
+用户原文
+   │
+   ├── 程序按枚举 Slot 的词典提取候选
+   │
+   └── 一次 LLM 调用
+          ├── 识别 Route / Intent
+          ├── 从原文提取文本 Slot
+          └── 根据原文语义，把取值绑定到所选 Intent 的业务字段
+                    │
+                    ▼
+             程序处理默认值和必填校验
 ```
 
-默认值生成的 `SlotValue` 使用 `start=0`、`end=0`、`confidence=1`，表示它不是用户原文中的 span；Trace 同时记录 `REQUIRED_SLOT_DEFAULT_APPLIED`。缺少且无默认值记录 `REQUIRED_SLOT_MISSING`。
+枚举候选值只按基础 Slot 在 Prompt 中出现一次，不会复制到使用该 Slot 的每个 Intent 参数下。Intent 模块只保留紧凑映射，例如：
 
-## 管理界面
+```text
+- volume_up：调大音量
+  参数：volume/音量值<-number[必填;备注=只提取正数；5% 统一转换为 5]
+- brightness_up：调高屏幕亮度
+  参数：brightness/亮度值<-number[必填;备注=只提取正数；5% 统一转换为 5]
 
-`/config/intents` 的 Intent 编辑区维护必填参数：
+## 文本 Slot
+- number（数值）：由模型从用户原文提取
+```
 
-- 从已启用 Slot 中选择参数；
-- 文本 Slot 可输入默认值；
-- 枚举 Slot 只能选择启用的 canonical；
-- 被引用的 Slot 不能停用或删除；
-- Slot 重命名时同步更新 Intent 引用。
+对于“音量提高5，亮度提高10”，模型在同一次返回中把 `5` 绑定为 `volume`，把 `10` 绑定为 `brightness`。
 
-## 边界与后续演进
+## Slot 提取
 
-当前实现只校验本次请求提取到的参数，不从历史对话或 `context` 自动继承参数。若后续要支持“先追问、下一轮只回答数值”的完整槽位填充，应增加会话级 pending action/slot 状态，并定义过期、覆盖和并发请求规则。默认值目前统一为字符串，以保持 Runtime Slot 契约不变；若下游需要数值或时间范围的强类型校验，再为 Slot 增加类型约束和解析器。
+- `string` Slot 由 LLM 从原文开放提取；Enum / Alias 页面中的参考示例只用于提示，不限制输出。
+- `enum` Slot 由程序使用 canonical、display、aliases 提取候选，命中后统一为 canonical。
+- 完整枚举词典不进入最终 Prompt；Prompt 只包含本次请求实际命中的枚举候选值。
+
+## 必填、默认值与校验
+
+- 必填字段已绑定：采用提取值，并遵守参数备注中的要求。
+- 必填字段缺失且有默认值：程序补入默认值，并记录 `REQUIRED_SLOT_DEFAULT_APPLIED`。
+- 必填字段缺失且无默认值：程序生成澄清，并记录 `REQUIRED_SLOT_MISSING`。
+- 可选字段缺失：不追问。
+- 备注中的业务要求由 LLM 在候选值绑定时执行；程序只做基础 Slot 类型校验和必填/default 处理。
+- V1 以 Top-1 Intent 为准；V2 对每个 action 的 Intent 和其原文范围分别处理候选。
+- 训练 Intent 与其他 Intent 使用相同的参数提取、默认值和缺参澄清规则。计划中的结果匹配验证对训练业务只比较一级 Route；该验证功能尚未实现。
+
+默认值没有原文位置，输出使用 `start=0`、`end=0`、`confidence=1`。候选值和转换后的最终值均按字符串输出；程序内部保留原始候选文本用于原文位置校验。

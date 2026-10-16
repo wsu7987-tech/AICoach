@@ -31,9 +31,9 @@ from app.schemas.intent import (
 )
 from app.services.runtime_model import ResolvedManagedModel
 from app.services.slot_extractor import (
-    extract_enum_slots,
+    extract_slot_candidates,
     locate_action_ranges,
-    scope_enum_slots_to_actions,
+    scope_slot_candidates_to_actions,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,15 +50,14 @@ class BusinessRuntimeConfiguration(BaseModel):
     config_snapshot_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
 
     @model_validator(mode="after")
-    def verify_business_provenance(self) -> BusinessRuntimeConfiguration:
-        payload, digest = business_snapshot(self.snapshot)
-        if digest != self.config_snapshot_hash:
-            raise ValueError("Release business provenance mismatch")
-        self.snapshot = RuntimeConfigSnapshot.model_validate(payload)
+    def validate_business_snapshot(self) -> BusinessRuntimeConfiguration:
+        self.snapshot = RuntimeConfigSnapshot.model_validate(
+            self.snapshot.model_dump(mode="json")
+        )
         return self
 
     @classmethod
-    def from_verified_release(cls, release: dict[str, Any]) -> BusinessRuntimeConfiguration:
+    def from_release(cls, release: dict[str, Any]) -> BusinessRuntimeConfiguration:
         """Build from a business-only immutable release."""
 
         return cls(
@@ -230,13 +229,13 @@ class IntentService:
                 if isinstance(self._provider, ModelProviderFactory):
                     raise configuration_error()
                 provider = self._provider
-            program_enum_slots = extract_enum_slots(request.text, config.snapshot)
+            slot_candidates = extract_slot_candidates(request.text, config.snapshot)
             prompt = self._prompt_builder.build(
                 config.snapshot,
                 request.text,
                 request.context,
                 output_version=output_version,
-                pre_extracted_slots=program_enum_slots,
+                slot_candidates=slot_candidates,
             )
             trace.prompt = prompt.model_dump(mode="json")
             response = await provider.invoke(prompt)
@@ -253,19 +252,19 @@ class IntentService:
                     ],
                 )
                 if len(output.actions) == 1:
-                    program_slots_by_action = {
-                        output.actions[0].action_id: program_enum_slots
+                    candidates_by_action = {
+                        output.actions[0].action_id: slot_candidates
                     }
                 else:
-                    program_slots_by_action = scope_enum_slots_to_actions(
-                        program_enum_slots, action_ranges
+                    candidates_by_action = scope_slot_candidates_to_actions(
+                        slot_candidates, action_ranges
                     )
                 validated = validate_recognition_output_v2(
                     output,
                     config.snapshot,
                     request_id=effective_request_id,
                     text=request.text,
-                    program_slots_by_action=program_slots_by_action,
+                    slot_candidates_by_action=candidates_by_action,
                     action_ranges=action_ranges,
                 )
             else:
@@ -275,7 +274,7 @@ class IntentService:
                     config.snapshot,
                     request_id=effective_request_id,
                     text=request.text,
-                    program_slots=program_enum_slots,
+                    slot_candidates=slot_candidates,
                 )
             trace.validation_issues = validated.validation_issues
             trace.final_result = validated.result.model_dump(mode="json")

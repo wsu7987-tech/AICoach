@@ -156,6 +156,11 @@ const promptComposition = computed(() => [
     enabled: true,
   },
   {
+    label: "程序候选 Slot",
+    detail: `${slots.value.filter((slot) => slot.enabled && slot.value_type === "enum").length} 个枚举 Slot，由程序提取`,
+    enabled: true,
+  },
+  {
     label: "输出格式",
     detail: "系统自动生成 JSON Schema 和标准示例",
     enabled: true,
@@ -313,7 +318,6 @@ const selectedGroupIsText = computed(
     selectedEnumUsage.value.length > 0 &&
     selectedEnumUsage.value.every((slot) => slot.value_type === "string"),
 );
-
 type IntentEditor = Omit<Intent, "required_slots"> & {
   required_slots: IntentRequiredSlot[];
   utterances: string[];
@@ -437,14 +441,32 @@ function acceptDraft(value: Draft) {
   draft.value = value;
   if (value.draft_json) {
     routes.value = structuredClone(value.draft_json.routes);
-    intents.value = structuredClone(value.draft_json.intents);
-    slots.value = structuredClone(value.draft_json.slots);
+    intents.value = structuredClone(value.draft_json.intents).map((intent) => ({
+      ...intent,
+      required_slots: (intent.required_slots ?? []).map((requirement) => ({
+        ...requirement,
+        field_name: requirement.field_name ?? null,
+        field_zh: requirement.field_zh ?? null,
+        required: requirement.required === true,
+        default_value: requirement.default_value ?? null,
+        note: requirement.note ?? null,
+      })),
+    }));
+    slots.value = structuredClone(value.draft_json.slots).map((slot) => ({
+      name: slot.name,
+      zh: slot.zh,
+      description: slot.description,
+      value_type: slot.value_type,
+      enabled: slot.enabled,
+      enum_group: slot.enum_group ?? slot.name,
+    }));
     enumGroups.value = Object.fromEntries(
       Object.entries(structuredClone(value.draft_json.enums)).map(
         ([groupName, values]) => [
           groupName,
           values.map((enumValue) => ({
-            ...enumValue,
+            canonical: enumValue.canonical,
+            display: enumValue.display,
             aliases: [...(enumValue.aliases ?? [])],
             enabled: enumValue.enabled !== false,
           })),
@@ -618,7 +640,7 @@ function applySlotForm() {
       throw new Error(
         `Slot ${editingSlotName.value} 是 ${requiredBy
           .map((intent) => intent.zh)
-          .join("、")} 的必填参数，不能停用`,
+          .join("、")} 的 Intent 参数，不能停用`,
       );
     if (
       current &&
@@ -636,7 +658,9 @@ function applySlotForm() {
         selectedEnumGroup.value = name;
       enumGroup = name;
     }
-    if (!Object.prototype.hasOwnProperty.call(enumGroups.value, enumGroup))
+    if (
+      !Object.prototype.hasOwnProperty.call(enumGroups.value, enumGroup)
+    )
       enumGroups.value[enumGroup] = [];
 
     const next: SlotDefinition = {
@@ -681,7 +705,7 @@ async function deleteSlot(slot: SlotDefinition) {
   if (requiredBy.length) {
     error.value = `Slot ${slot.name} 是 ${requiredBy
       .map((intent) => intent.zh)
-      .join("、")} 的必填参数，请先解除引用`;
+      .join("、")} 的 Intent 参数，请先解除引用`;
     return;
   }
   try {
@@ -1145,6 +1169,7 @@ function selectIntent(intent: Intent) {
     aliases: [...(intent.aliases ?? [])],
     required_slots: (intent.required_slots ?? []).map((requirement) => ({
       ...requirement,
+      note: requirement.note ?? null,
     })),
     utterances: currentExamples
       .filter((example) => example.intent === intent.name)
@@ -1241,20 +1266,22 @@ function requiredSlotDefaultOptions(slotName: string) {
 
 function addRequiredSlot() {
   applyLocal(() => {
-    const used = new Set(
-      intentForm.required_slots.map((requirement) => requirement.slot_name),
-    );
-    const slot = slots.value.find((item) => item.enabled && !used.has(item.name));
-    if (!slot) throw new Error("没有可继续添加的已启用 Slot");
+    const slot = slots.value.find((item) => item.enabled);
+    if (!slot) throw new Error("没有可用的已启用 Slot");
     intentForm.required_slots.push({
       slot_name: slot.name,
+      field_name: null,
+      field_zh: null,
+      required: true,
       default_value: null,
+      note: null,
     });
   });
 }
 
 function changeRequiredSlot(requirement: IntentRequiredSlot) {
   requirement.default_value = null;
+  requirement.note = null;
 }
 
 function removeRequiredSlot(index: number) {
@@ -1291,29 +1318,36 @@ function saveIntentForm() {
 
   const requiredSlots = intentForm.required_slots.map((requirement) => ({
     slot_name: requirement.slot_name.trim(),
+    field_name: requirement.field_name?.trim() || null,
+    field_zh: requirement.field_zh?.trim() || null,
+    required: requirement.required,
     default_value: requirement.default_value?.trim() || null,
+    note: requirement.note?.trim() || null,
   }));
   if (requiredSlots.some((requirement) => !requirement.slot_name))
-    throw new Error("必填参数必须选择一个 Slot");
+    throw new Error("Intent 参数必须选择一个 Slot");
   if (
-    new Set(requiredSlots.map((requirement) => requirement.slot_name)).size !==
+    new Set(
+      requiredSlots.map(
+        (requirement) => requirement.field_name || requirement.slot_name,
+      ),
+    ).size !==
     requiredSlots.length
   )
-    throw new Error("同一个 Slot 不能重复配置为必填参数");
+    throw new Error("同一 Intent 的业务英文字段不能重复");
   for (const requirement of requiredSlots) {
     const slot = slots.value.find(
       (item) => item.name === requirement.slot_name && item.enabled,
     );
-    if (!slot) throw new Error(`必填参数 ${requirement.slot_name} 不存在或未启用`);
+    const fieldName = requirement.field_name || requirement.slot_name;
+    if (!slot) throw new Error(`Intent 参数 ${fieldName} 引用的 Slot 不存在或未启用`);
     if (slot.value_type === "enum" && requirement.default_value) {
       const allowed = requiredSlotDefaultOptions(slot.name).some(
         (value) => value.canonical === requirement.default_value,
       );
       if (!allowed)
-        throw new Error(`必填参数 ${slot.zh} 的默认值必须选择已启用的标准值`);
+        throw new Error(`参数 ${fieldName} 的默认值必须选择已启用的标准值`);
     }
-    if (route === "training_business" && !requirement.default_value)
-      throw new Error(`训练业务不能追问，必填参数 ${slot.zh} 必须设置默认值`);
   }
 
   const oldName = selectedIntentName.value;
@@ -1871,71 +1905,102 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
               <div class="utterance-editor">
                 <div class="intent-required-heading">
                   <div>
-                    <h3>必填参数</h3>
+                    <h3>Intent 参数</h3>
                     <p>
-                      识别到当前 Intent 后校验这些 Slot；未提取到时优先使用默认值，未设置默认值则向用户追问。
+                      基础 Slot 负责提取候选值；业务中英文字段负责说明该候选值在当前 Intent 中的含义。未填写业务字段时直接使用 Slot 名称。
                     </p>
                   </div>
-                  <el-button @click="addRequiredSlot">添加必填参数</el-button>
+                  <el-button @click="addRequiredSlot">添加参数</el-button>
                 </div>
                 <div class="intent-required-list">
                   <div
                     v-for="(requirement, index) in intentForm.required_slots"
-                    :key="`${requirement.slot_name}-${index}`"
+                    :key="index"
                     class="intent-required-row"
                   >
-                    <label>
-                      <span>参数 Slot</span>
-                      <el-select
-                        v-model="requirement.slot_name"
-                        filterable
-                        :aria-label="`必填参数 ${index + 1} Slot`"
-                        @change="changeRequiredSlot(requirement)"
-                      >
-                        <el-option
-                          v-for="slot in slots.filter((item) => item.enabled)"
-                          :key="slot.name"
-                          :label="`${slot.zh} (${slot.name})`"
-                          :value="slot.name"
-                          :disabled="
-                            intentForm.required_slots.some(
-                              (item, itemIndex) =>
-                                itemIndex !== index &&
-                                item.slot_name === slot.name,
-                            )
+                    <div class="intent-parameter-fields">
+                      <label>
+                        <span>基础 Slot</span>
+                        <el-select
+                          v-model="requirement.slot_name"
+                          filterable
+                          :aria-label="`Intent 参数 ${index + 1} Slot`"
+                          @change="changeRequiredSlot(requirement)"
+                        >
+                          <el-option
+                            v-for="slot in slots.filter((item) => item.enabled)"
+                            :key="slot.name"
+                            :label="`${slot.zh} (${slot.name})`"
+                            :value="slot.name"
+                          />
+                        </el-select>
+                      </label>
+                      <label>
+                        <span>业务英文字段（可选）</span>
+                        <el-input
+                          v-model="requirement.field_name"
+                          clearable
+                          :aria-label="`Intent 参数 ${index + 1} 业务英文字段`"
+                          :placeholder="requirement.slot_name"
+                        />
+                      </label>
+                      <label>
+                        <span>业务中文字段（可选）</span>
+                        <el-input
+                          v-model="requirement.field_zh"
+                          clearable
+                          :aria-label="`Intent 参数 ${index + 1} 业务中文字段`"
+                          :placeholder="requiredSlotDefinition(requirement.slot_name)?.zh"
+                        />
+                      </label>
+                      <label class="intent-parameter-switch">
+                        <span>必填</span>
+                        <el-switch
+                          v-model="requirement.required"
+                          :aria-label="`Intent 参数 ${index + 1} 必填`"
+                        />
+                      </label>
+                      <label>
+                        <span>默认值（可选）</span>
+                        <el-select
+                          v-if="
+                            requiredSlotDefinition(requirement.slot_name)
+                              ?.value_type === 'enum'
                           "
+                          v-model="requirement.default_value"
+                          clearable
+                          :aria-label="`Intent 参数 ${index + 1} 默认值`"
+                          placeholder="缺失时使用"
+                        >
+                          <el-option
+                            v-for="value in requiredSlotDefaultOptions(
+                              requirement.slot_name,
+                            )"
+                            :key="value.canonical"
+                            :label="`${value.display} (${value.canonical})`"
+                            :value="value.canonical"
+                          />
+                        </el-select>
+                        <el-input
+                          v-else
+                          v-model="requirement.default_value"
+                          clearable
+                          :aria-label="`Intent 参数 ${index + 1} 默认值`"
+                          placeholder="缺失时使用"
                         />
-                      </el-select>
-                    </label>
-                    <label>
-                      <span>默认值（可选）</span>
-                      <el-select
-                        v-if="
-                          requiredSlotDefinition(requirement.slot_name)
-                            ?.value_type === 'enum'
-                        "
-                        v-model="requirement.default_value"
-                        clearable
-                        :aria-label="`必填参数 ${index + 1} 默认值`"
-                        placeholder="留空则缺失时追问"
-                      >
-                        <el-option
-                          v-for="value in requiredSlotDefaultOptions(
-                            requirement.slot_name,
-                          )"
-                          :key="value.canonical"
-                          :label="`${value.display} (${value.canonical})`"
-                          :value="value.canonical"
+                      </label>
+                      <label class="intent-parameter-note">
+                        <span>备注</span>
+                        <el-input
+                          v-model="requirement.note"
+                          clearable
+                          type="textarea"
+                          :rows="3"
+                          :aria-label="`Intent 参数 ${index + 1} 备注`"
+                          placeholder="例如：只提取正数；5% 统一转换为 5"
                         />
-                      </el-select>
-                      <el-input
-                        v-else
-                        v-model="requirement.default_value"
-                        clearable
-                        :aria-label="`必填参数 ${index + 1} 默认值`"
-                        placeholder="留空则缺失时追问"
-                      />
-                    </label>
+                      </label>
+                    </div>
                     <el-button
                       link
                       type="danger"
@@ -1945,7 +2010,7 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
                     </el-button>
                   </div>
                   <p v-if="!intentForm.required_slots.length" class="empty-group">
-                    当前 Intent 没有必填参数
+                    当前 Intent 没有参数
                   </p>
                 </div>
               </div>
@@ -2002,8 +2067,7 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
               <span class="section-kicker">参数提取规则</span>
               <h2>定义参数，并明确由 LLM 或程序负责提取</h2>
               <p>
-                文本型 Slot 的说明和少量参考示例进入 Prompt，由 LLM 提取开放文本；
-                枚举型 Slot 由程序按标准值、显示名称和别名匹配，完整词典不进入 Prompt。
+                Slot 类型只有 string 和 enum；Enum / Alias 中配置的匹配规则可为基础 Slot 生成候选值。
                 保存到配置草稿后，仍需发布才会影响线上识别。
               </p>
             </div>
@@ -2092,7 +2156,9 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
             <el-table-column prop="description" label="提取内容" min-width="250" />
             <el-table-column label="提取方式" width="150">
               <template #default="{ row }">
-                <el-tag :type="row.value_type === 'enum' ? 'primary' : 'info'">
+                <el-tag
+                  :type="row.value_type === 'enum' ? 'primary' : 'info'"
+                >
                   {{ row.value_type === "enum" ? "程序 · 枚举" : "LLM · 文本" }}
                 </el-tag>
               </template>
@@ -2607,7 +2673,7 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
               </ul>
               <div class="composition-note">
                 <strong>不会进入 Prompt</strong>
-                <p>枚举型 Slot 的完整匹配词典由程序使用，只把已提取结果提供给模型辅助判断。</p>
+                <p>完整枚举词典只由程序使用；Prompt 只接收本次实际命中的枚举 Slot 候选值。</p>
               </div>
             </aside>
           </div>
@@ -2867,7 +2933,7 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
           show-icon
         />
         <div class="form-help">
-          Slot 决定需要提取哪类参数。文本型由 LLM 提取；枚举型由程序词典匹配。标识建议使用稳定的英文 snake_case。
+          Slot 定义可复用的提取对象；枚举匹配值和文本参考示例在 Enum / Alias 页面维护。标识建议使用稳定的英文 snake_case。
         </div>
         <div class="dialog-form-grid">
           <label>
@@ -2907,7 +2973,7 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
             {{
               slotForm.value_type === "enum"
                 ? "程序使用 canonical、display 和 aliases 匹配原话；完整词典不进入 Prompt。"
-                : "名称、说明和参考示例进入 Prompt；LLM 可以提取未配置的新文本。"
+                : "名称、说明和参考示例进入 Prompt；模型从原话提取文本。"
             }}
           </small>
         </label>
@@ -2921,7 +2987,7 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", beforeUnload));
           />
           <small>
             新增 Slot 时自动创建；之后可在 Enum / Alias 页面维护
-            {{ slotForm.value_type === "enum" ? "程序匹配词典" : "LLM 参考示例" }}。
+            {{ slotForm.value_type === "string" ? "LLM 参考示例" : "程序匹配词典" }}。
           </small>
         </label>
         <div class="switch-field">
