@@ -49,7 +49,7 @@ v1.2.5 沿用 v1.2 的 10 个 Task（由 v1.1 的 22 个收敛而来）。每个
 
 ## 当前进度（v1.2.5）
 
-TASK-001、002、101 已完成；**下一个是 TASK-102**，开工前先过 `phase-02-runtime-core/TASK-101-ADDENDUM-v1.2.5.md`。
+以 `PROJECT_STATUS.md` 为当前进度来源。TASK-301 已按用户确认的 V2 方案实现，待迁移与授权测试；原任务内容只作参考。
 
 ## 开工前置确认（不阻塞 TASK-001~301）
 
@@ -64,5 +64,5 @@ TASK-001、002、101 已完成；**下一个是 TASK-102**，开工前先过 `ph
 - 参考项目优先级以 `docs/09` 为准；官方 SDK/Qwen 文档高于第三方示例。
 - 不得复制 `sohaggain` 的双层 retry / 同步 client。
 - `/ready` 不等待 Active Release；Runtime 配置状态单独看 `runtime_config_ready`。
-- TASK-301 必须产出 Run 对比、一级 Route 混淆矩阵、Per-route P/R/F1。
+- 当前批量评测提供 Run 对比及显式标注动作的 Route 混淆统计、Per-route P/R/F1；最终通过率按问题—标准答案验收，详见 `docs/12`。
 - Contract 以 `docs/10` 为验收依据；门禁命令与报告格式见 `AGENTS.md §14`。

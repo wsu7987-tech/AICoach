@@ -12,7 +12,7 @@
 | TASK-201 在线配置与Release | ✅ | 最终独立复核 PASS，且 TASK-102/201 interface gate PASS；见 TASK-201_FINAL_INCREMENTAL_REVIEW.md。 |
 | TASK-103 Trace与Runtime API | ✅ | 最终独立增量复核 PASS；TASK-202 已获准。 |
 | TASK-202 研发后台：调试/观测/Replay/Diff/状态 | 实现完成，待最终验收确认 | 专属 localhost Provider + 隔离 MySQL + FastAPI/Vite/Playwright 主流程已通过；不自行宣称正式 PASS。 |
-| TASK-301 批量评测闭环 | ⬜ | |
+| TASK-301 批量评测闭环 | 实现完成，待迁移与授权测试 | V2 问题—标准答案模板、持久 Worker、规则/模型评审、人工复核、通过率、badcase 筛选/导出/复测与任务对比；见 docs/12-批量评测使用与验收.md。未执行迁移、测试或真实模型调用。 |
 | TASK-401 生产部署与主系统接入 | ⬜ | |
 | TASK-501 自动化测试与E2E验收 | ⬜ | |
 | vNext Step 1 模型管理重构 | 🚧 实现完成，待迁移与定向测试 | 已改为 Base URL + API Key + Model Name 的通用 OpenAI-compatible 接入；业务 Release 已与模型解耦，旧 ModelConfig 及兼容支路由破坏性迁移删除；迁移和测试尚未执行。 |

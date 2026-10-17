@@ -93,10 +93,19 @@ HTTP 与 error_code 映射（Contract，不再“按网关约定”）：
 
 ### Evaluation
 
-- dataset import/list
-- run create/list/detail/cancel
-- case result list
-- export
+- `GET /api/admin/evaluation/template`：下载问题—标准答案模板。
+- `GET/POST /api/admin/evaluation/datasets`：评测集列表与新版本保存。
+- `POST /api/admin/evaluation/datasets/import`：请求体为 XLSX 文件，查询参数为 name/filename。
+- `GET /api/admin/evaluation/datasets/{id}`、`/{id}/export`：详情和下载。
+- `GET/POST /api/admin/evaluation/runs`：任务列表与创建；可带 parent_run_id/case_ids 创建子集复测。
+- `GET /api/admin/evaluation/runs/{id}`：任务与完整通过率统计。
+- `POST /api/admin/evaluation/runs/{id}/cancel`：停止后续 Case。
+- `GET /api/admin/evaluation/runs/{id}/results`：支持状态、场景、问题类别、关键词、bad_only 和 primary_only 筛选。
+- `POST /api/admin/evaluation/runs/{id}/results/{result_id}/review`：带 reviewer/reason/expected_revision 的人工复核。
+- `GET /api/admin/evaluation/runs/{id}/export`：按同样筛选导出，保留完整任务通过率口径。
+- `GET /api/admin/evaluation/compare?left=...&right=...`：同集任务对比。
+
+当前判定和验收口径见 [批量评测使用与验收](12-批量评测使用与验收.md)。
 
 ### Status
 

@@ -6,11 +6,13 @@ import DebugConsole from "./DebugConsole.vue";
 import IntentRecognition from "./IntentRecognition.vue";
 import ModelManagement from "./ModelManagement.vue";
 import ServiceStatus from "./ServiceStatus.vue";
+import EvaluationWorkbench from "./EvaluationWorkbench.vue";
 
 type AdminRoute =
   | "/intent"
   | "/debug"
   | "/observability"
+  | "/evaluation"
   | "/config/routes"
   | "/config/intents"
   | "/config/slots"
@@ -27,6 +29,7 @@ const runtimeNavigation: NavigationItem[] = [
   { path: "/intent", label: "意图识别" },
   { path: "/debug", label: "多条调试" },
   { path: "/observability", label: "调用观测" },
+  { path: "/evaluation", label: "批量评测" },
   { path: "/status", label: "服务状态" },
 ];
 
@@ -191,6 +194,7 @@ onBeforeUnmount(() => window.removeEventListener("popstate", syncRoute));
           @navigate="navigate"
         />
         <ModelManagement v-else-if="route === '/models'" />
+        <EvaluationWorkbench v-else-if="route === '/evaluation'" />
         <ConfigCenter
           v-else-if="route.startsWith('/config/')"
           :section="configSection"

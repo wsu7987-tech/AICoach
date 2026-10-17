@@ -28,7 +28,7 @@
 
 - `POST /api/v1/intent/analyze` 稳定 Runtime API。
 - 7 个一级 Route；所有业务按相同规则输出二级 Intent、Slots、Risk、Clarification。
-- 计划中的结果匹配验证对训练业务只比较一级 Route；该功能尚未实现。
+- 批量评测按 V2 动作结果和问题—标准答案验收，所有业务按所填标准检查；支持规则/模型评审及人工复核。
 - Prompt = 固定模板 + 已发布配置动态组装。
 - 通用 OpenAI-compatible Provider，通过 Base URL + API Key + Model Name 接入兼容服务；优先 JSON Schema Structured Output。
 - 每次 Provider Attempt 可追溯；Secret 必须脱敏。
@@ -55,7 +55,7 @@
 
 - **一期不把 LangGraph/LangChain 作为运行依赖。** Intent 是确定性 Service Pipeline；后续出现多节点状态编排时再引入。
 - **配置简化为 JSON Draft + Immutable Release Snapshot**，不为每种配置创建大量独立业务表。
-- **Model Config 独立版本化。** Runtime 使用 Release 指定的默认模型；Admin Debug/Evaluation 可显式覆盖模型，用于 A/B 与稳定性验证。
+- **业务配置和模型独立。** Release 仅保存业务配置，默认模型由模型管理负责；Evaluation 分别冻结业务快照与 ManagedModel 调用快照。
 - **Replay/Diff 不删除，合并进调用观测任务**，不建设独立复杂平台。
 - **Evaluation 使用 MySQL-backed Worker**，不依赖 Redis/MQ，并支持重启后恢复/继续处理未完成 Run。
 
@@ -74,7 +74,9 @@
 11. `AGENTS.md`
 12. `tasks/README.md`
 
-评估模板：`assets/AI_Coach_意图识别评估集_极简版_v0.5.xlsx`（v0.5 修复备注列下拉、扩展到 500 行、新增“意图归属参考”页）
+当前评测模板：[问题—标准答案模板](assets/AI_Coach_批量评测模板.xlsx)。
+使用、Worker 启动及验收口径：[批量评测说明](docs/12-批量评测使用与验收.md)。
+旧 v0.5 文件仅作历史业务样本参考，不直接导入当前评测。
 
 初始业务配置：`bootstrap/initial-config.v1.json`
 
@@ -82,7 +84,7 @@
 
 新的模型管理页面将 API Key 认证加密后保存到独立 Credential Store。后端必须通过环境变量
 `CREDENTIAL_ENCRYPTION_KEY` 获得 Fernet 主密钥；所有 Pod 必须使用同一个值。该值不得写入
-数据库、仓库、日志或前端配置。旧 `QWEN_API_KEY` / `credential_ref` 路径继续兼容。
+数据库、仓库、日志或前端配置。旧模型凭据路径已经删除，不保留兼容分支。
 
 可在安全的本地终端生成一次主密钥：
 
@@ -98,7 +100,7 @@ uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_
 严格按 `tasks/README.md` 顺序执行。每个任务完成后必须：
 
 - 更新 `PROJECT_STATUS.md`；
-- 运行任务要求的测试；
+- 在用户明确授权后运行任务要求的测试；
 - 输出修改文件、测试结果、未完成项、风险；
 - 不得擅自引入 Redis/MQ/向量库/LangGraph 等一期非必要依赖。
 

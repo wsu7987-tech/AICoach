@@ -167,7 +167,9 @@ class IntentRequestTrace(Base):
     )
     config_snapshot_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     managed_model_uid: Mapped[str | None] = mapped_column(String(69), nullable=True, index=True)
-    managed_model_snapshot_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    managed_model_snapshot_json: Mapped[dict[str, object] | None] = mapped_column(
+        JSON, nullable=True
+    )
     final_route: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     final_result_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     reason_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -255,6 +257,14 @@ class EvaluationRun(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    config_snapshot_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    evaluation_config_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    cases_json: Mapped[list[object]] = mapped_column(JSON, nullable=False)
+    parent_run_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    cancel_requested: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("0")
+    )
     dataset_id: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("evaluation_dataset.id", ondelete="RESTRICT"),
@@ -306,3 +316,35 @@ class EvaluationCaseResult(Base):
     # Deliberately no FK: trace retention must not delete results or be blocked by them.
     trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    auto_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    verdict_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    review_json: Mapped[list[object]] = mapped_column(JSON, nullable=False)
+    review_revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(fsp=6), nullable=False, default=_utc_now)
+
+
+@event.listens_for(EvaluationDataset, "before_update")
+@event.listens_for(EvaluationDataset, "before_delete")
+def reject_evaluation_dataset_mutation(mapper, connection, target):
+    raise ValueError("evaluation datasets are immutable; create a new version")
+
+
+@event.listens_for(EvaluationRun, "before_update")
+def reject_evaluation_run_input_mutation(mapper, connection, target):
+    state = inspect(target)
+    for attribute in (
+        "dataset_id",
+        "dataset_hash",
+        "cases_json",
+        "release_id",
+        "config_snapshot_hash",
+        "config_snapshot_json",
+        "managed_model_uid",
+        "managed_model_snapshot_json",
+        "evaluation_config_json",
+        "repeat_count",
+        "worker_concurrency",
+        "parent_run_id",
+    ):
+        if state.attrs[attribute].history.has_changes():
+            raise ValueError(f"evaluation run {attribute} is immutable; create a new run")

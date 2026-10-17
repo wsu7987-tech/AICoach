@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     max_request_body_bytes: int = 1_048_576
     max_eval_file_bytes: int = 52_428_800
     max_eval_cases: int = 500
+    eval_worker_concurrency: int = Field(default=4, ge=1, le=8)
+    eval_worker_poll_seconds: float = Field(default=2.0, ge=0.2, le=30)
+    eval_worker_lease_seconds: int = Field(default=60, ge=30, le=600)
     provider_queue_wait_timeout: float = 2.0
     trace_raw_max_bytes: int = Field(default=65_536, ge=256)
     runtime_config_cache_ttl_seconds: float = Field(default=2.0, gt=0, le=60)
